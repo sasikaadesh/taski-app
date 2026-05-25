@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+/* ── Tron neon design-system tokens ───────────────────────────────────────── */
+:root {
+  /* Backgrounds */
+  --color-bg-base:           #050a0e;
+  --color-bg-muted:          #080f14;
+  --color-bg-raised:         #0a1628;
+  --color-bg-overlay:        #0d1f35;
+  --color-bg-grid:           #091520;
+
+  /* Text */
+  --color-text-primary:      #e0f4ff;
+  --color-text-secondary:    #4a9bbe;
+  --color-text-dim:          #1e4d6b;
+
+  /* Neon cyan — primary accent */
+  --color-neon-cyan:         #00d4ff;
+  --color-neon-cyan-dim:     #0099bb;
+  --color-neon-cyan-glow:    rgba(0, 212, 255, 0.15);
+  --color-neon-cyan-border:  rgba(0, 212, 255, 0.3);
+
+  /* Neon orange — warnings only */
+  --color-neon-orange:       #ff6b00;
+  --color-neon-orange-dim:   #cc5500;
+  --color-neon-orange-glow:  rgba(255, 107, 0, 0.12);
+
+  /* Grid & borders */
+  --color-grid-line:         rgba(0, 212, 255, 0.04);
+  --color-border:            rgba(0, 212, 255, 0.2);
+  --color-border-bright:     rgba(0, 212, 255, 0.5);
+
+  /* Semantic */
+  --color-success:           #00ff88;
+  --color-warning:           #ff6b00;
+  --color-danger:            #ff2d55;
+
+  /* Legacy aliases — kept so existing component references resolve */
+  --color-accent:            #00d4ff;
+  --color-accent-hover:      #0099bb;
+  --color-accent-muted:      rgba(0, 212, 255, 0.15);
+}
+
+/* ── Animations ───────────────────────────────────────────────────────────── */
+@keyframes glowPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 20px rgba(0, 212, 255, 0.5),
+      inset 0 0 20px rgba(0, 212, 255, 0.1);
+  }
+  50% {
+    box-shadow:
+      0 0 35px rgba(0, 212, 255, 0.9),
+      inset 0 0 20px rgba(0, 212, 255, 0.15);
+  }
+}
+
+@keyframes scanLine {
+  0%   { transform: translateY(-100%); opacity: 0; }
+  50%  { opacity: 0.03; }
+  100% { transform: translateY(100%);  opacity: 0; }
+}
+
+/* ── Base reset ───────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-bg-base);
+  /* Tron grid floor */
+  background-image:
+    linear-gradient(var(--color-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-grid-line) 1px, transparent 1px);
+  background-size: 40px 40px;
+  background-attachment: fixed;
+  color: var(--color-text-primary);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.6;
+  letter-spacing: 0.03em;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  width: 100%;
+  min-height: 100svh;
+}
+
+/* ── Date/time input dark-mode fix ────────────────────────────────────────── */
+input[type="date"],
+input[type="time"] {
+  color-scheme: dark;
+}
+
+/* ── Focus-visible ring (accessibility) ───────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--color-neon-cyan);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--color-neon-cyan-glow);
+}
+
+/* ── Custom scrollbars ────────────────────────────────────────────────────── */
+::-webkit-scrollbar               { width: 4px; height: 4px; }
+::-webkit-scrollbar-track         { background: var(--color-bg-base); }
+::-webkit-scrollbar-thumb         { background: var(--color-border); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover   { background: var(--color-neon-cyan-dim); }
+*                                 { scrollbar-width: thin; scrollbar-color: var(--color-border) var(--color-bg-base); }
