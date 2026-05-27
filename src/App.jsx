@@ -1,23 +1,28 @@
-// App — root layout: header, two-column todo panel, calendar banner, floating chatbot.
+// App — root layout: three-zone Jarvis interface.
+// LEFT: TASKI branding + todo form + todo list.
+// CENTER: JarvisVisualizer animated SVG.
+// RIGHT: ChatBot full-height panel.
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import TodoForm from './components/TodoForm';
 import TodoList from './components/TodoList';
-import ChatBot from './components/ChatBot';
+import ChatBot  from './components/ChatBot';
+import JarvisVisualizer from './components/JarvisVisualizer';
+import StartupOverlay   from './components/StartupOverlay';
 import { createCalendarEvent } from './lib/googleCalendar';
 
-const STORAGE_KEY = 'taski-todos';
+const STORAGE_KEY    = 'taski-todos';
+const STARTUP_FLAG   = 'taski-startup-done';
 
 function loadTodos() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
 export default function App() {
+  // ── Todos ─────────────────────────────────────────────────────────────────
   const [todos, setTodos] = useState(loadTodos);
 
   useEffect(() => {
@@ -25,18 +30,14 @@ export default function App() {
   }, [todos]);
 
   function handleAdd(todo) {
-    // Add to local state immediately so the UI is responsive.
-    // Conflict detection already ran inside TodoForm BEFORE this is called,
-    // so we never race against a just-created calendar event here.
     setTodos((prev) => [todo, ...prev]);
-
     if (todo.date) {
       createCalendarEvent(todo)
-        .then(() => {
+        .then(() =>
           setTodos((prev) =>
             prev.map((t) => (t.id === todo.id ? { ...t, calendarAdded: true } : t))
-          );
-        })
+          )
+        )
         .catch(() => {});
     }
   }
@@ -54,137 +55,198 @@ export default function App() {
   const pending   = todos.filter((t) => !t.done);
   const completed = todos.filter((t) => t.done);
 
-  return (
-    <div style={{ minHeight: '100svh' }}>
+  // ── Jarvis state ──────────────────────────────────────────────────────────
+  const [visualizerState, setVisualizerState] = useState('idle');
+  const [isMuted, setIsMuted]                 = useState(false);
 
-      {/* ── Header ── */}
-      <header
-        className="sticky top-0 z-40"
+  // micToggleRef is populated by ChatBot on mount so the visualizer can trigger it
+  const micToggleRef = useRef(null);
+  const registerMicToggle = useCallback((fn) => {
+    micToggleRef.current = fn;
+  }, []);
+
+  const handleMicClick = useCallback(() => {
+    micToggleRef.current?.();
+  }, []);
+
+  // ── Startup animation (once per session) ──────────────────────────────────
+  const [startupDone, setStartupDone] = useState(() =>
+    Boolean(sessionStorage.getItem(STARTUP_FLAG))
+  );
+
+  function handleStartupDone() {
+    sessionStorage.setItem(STARTUP_FLAG, '1');
+    setStartupDone(true);
+  }
+
+  // ── Responsive: mobile todo sidebar ──────────────────────────────────────
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // ── isMicSupported (queried from ChatBot via a registered callback) ───────
+  const [isMicSupported, setIsMicSupported] = useState(true);
+  const registerMicSupport = useCallback((supported) => {
+    setIsMicSupported(supported);
+  }, []);
+
+  return (
+    <>
+      {/* ── Startup overlay (plays once per session) ── */}
+      {!startupDone && (
+        <StartupOverlay onDone={handleStartupDone} isMuted={isMuted} />
+      )}
+
+      {/* ── Three-zone layout ── */}
+      <div
         style={{
-          background:  'var(--color-bg-muted)',
-          borderBottom: '1px solid var(--color-border)',
-          boxShadow:   '0 1px 20px rgba(0,212,255,0.1)',
+          display:       'flex',
+          height:        '100svh',
+          overflow:      'hidden',
+          position:      'relative',
         }}
       >
-        <div className="max-w-[1200px] mx-auto px-8 py-4 flex items-center justify-between">
-          {/* Logo + name */}
-          <div className="flex items-center gap-3">
-            {/* Tron-style icon box — outlined, not filled */}
-            <div
-              style={{
-                width:        '36px',
-                height:       '36px',
-                border:       '1px solid var(--color-neon-cyan)',
-                borderRadius: '4px',
-                display:      'flex',
-                alignItems:   'center',
-                justifyContent: 'center',
-                boxShadow:    '0 0 12px rgba(0,212,255,0.3), inset 0 0 12px rgba(0,212,255,0.05)',
-              }}
-            >
-              {/* Custom T mark in Tron style */}
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-                <rect x="1" y="2" width="16" height="2" fill="#00d4ff"/>
-                <rect x="7.5" y="4" width="3" height="12" fill="#00d4ff"/>
-              </svg>
-            </div>
 
-            <div>
-              <h1
+        {/* ════════════════════════════════════════
+            LEFT ZONE — branding + todos
+        ════════════════════════════════════════ */}
+        <div
+          className="left-zone"
+          style={{
+            width:         '30%',
+            minWidth:      '280px',
+            flexShrink:    0,
+            display:       'flex',
+            flexDirection: 'column',
+            borderRight:   '1px solid rgba(0,212,255,0.15)',
+            overflow:      'hidden',
+          }}
+        >
+          {/* Brand header */}
+          <div
+            style={{
+              padding:      '24px 24px 16px',
+              borderBottom: '1px solid rgba(0,212,255,0.1)',
+              flexShrink:   0,
+              background:   'rgba(0,212,255,0.02)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              {/* Tron T icon */}
+              <div
                 style={{
-                  fontFamily:   "'Orbitron', sans-serif",
-                  fontSize:     '20px',
-                  fontWeight:   700,
-                  letterSpacing: '0.08em',
-                  color:        'var(--color-neon-cyan)',
-                  textShadow:   '0 0 20px rgba(0,212,255,0.8)',
-                  lineHeight:   1,
-                  margin:       0,
+                  width:          '32px',
+                  height:         '32px',
+                  border:         '1px solid #00d4ff',
+                  borderRadius:   '3px',
+                  display:        'flex',
+                  alignItems:     'center',
+                  justifyContent: 'center',
+                  boxShadow:      '0 0 14px rgba(0,212,255,0.3), inset 0 0 10px rgba(0,212,255,0.05)',
+                  flexShrink:     0,
                 }}
               >
-                TASKI
-              </h1>
-              <p
-                style={{
-                  fontFamily:   "'Rajdhani', sans-serif",
-                  fontSize:     '11px',
-                  letterSpacing: '0.08em',
-                  color:        'var(--color-text-secondary)',
-                  textTransform: 'uppercase',
-                  marginTop:    '2px',
-                  lineHeight:   1,
-                }}
-              >
-                Smart todos, smarter scheduling
-              </p>
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <rect x="1" y="2" width="14" height="2" fill="#00d4ff"/>
+                  <rect x="6.5" y="4" width="3" height="10" fill="#00d4ff"/>
+                </svg>
+              </div>
+
+              <div>
+                <h1
+                  style={{
+                    fontFamily:    "'Orbitron', sans-serif",
+                    fontSize:      '22px',
+                    fontWeight:    700,
+                    letterSpacing: '0.1em',
+                    color:         '#00d4ff',
+                    textShadow:    '0 0 20px rgba(0,212,255,0.8)',
+                    margin:        0,
+                    lineHeight:    1,
+                  }}
+                >
+                  TASKI
+                </h1>
+                <p
+                  style={{
+                    fontFamily:    "'Rajdhani', sans-serif",
+                    fontSize:      '10px',
+                    letterSpacing: '0.12em',
+                    color:         'rgba(0,212,255,0.45)',
+                    textTransform: 'uppercase',
+                    margin:        '3px 0 0',
+                    lineHeight:    1,
+                  }}
+                >
+                  Smart Scheduling
+                </p>
+              </div>
             </div>
-          </div>
 
-          {/* Stats badges */}
-          <div className="flex items-center gap-2">
-            <span
-              style={{
-                fontFamily:   "'Rajdhani', sans-serif",
-                fontSize:     '11px',
-                fontWeight:   500,
-                letterSpacing: '0.08em',
-                textTransform: 'uppercase',
-                padding:       '3px 12px',
-                borderRadius:  '100px',
-                background:    'var(--color-neon-cyan-glow)',
-                border:        '1px solid var(--color-neon-cyan-border)',
-                color:         'var(--color-neon-cyan)',
-                boxShadow:     '0 0 10px rgba(0,212,255,0.3)',
-              }}
-            >
-              {pending.length} pending
-            </span>
-
-            {completed.length > 0 && (
+            {/* Stats row */}
+            <div style={{ display: 'flex', gap: '8px', marginTop: '14px' }}>
               <span
                 style={{
-                  fontFamily:   "'Rajdhani', sans-serif",
-                  fontSize:     '11px',
-                  fontWeight:   500,
-                  letterSpacing: '0.08em',
+                  fontFamily:    "'Rajdhani', sans-serif",
+                  fontSize:      '10px',
+                  fontWeight:    500,
+                  letterSpacing: '0.1em',
                   textTransform: 'uppercase',
-                  padding:       '3px 12px',
+                  padding:       '2px 10px',
                   borderRadius:  '100px',
-                  background:    'rgba(0,255,136,0.08)',
-                  border:        '1px solid rgba(0,255,136,0.3)',
-                  color:         'var(--color-success)',
-                  boxShadow:     '0 0 10px rgba(0,255,136,0.2)',
+                  background:    'rgba(0,212,255,0.08)',
+                  border:        '1px solid rgba(0,212,255,0.25)',
+                  color:         '#00d4ff',
                 }}
               >
-                {completed.length} done
+                {pending.length} pending
               </span>
-            )}
+              {completed.length > 0 && (
+                <span
+                  style={{
+                    fontFamily:    "'Rajdhani', sans-serif",
+                    fontSize:      '10px',
+                    fontWeight:    500,
+                    letterSpacing: '0.1em',
+                    textTransform: 'uppercase',
+                    padding:       '2px 10px',
+                    borderRadius:  '100px',
+                    background:    'rgba(0,255,136,0.06)',
+                    border:        '1px solid rgba(0,255,136,0.25)',
+                    color:         '#00ff88',
+                  }}
+                >
+                  {completed.length} done
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-      </header>
 
-      {/* ── Main ── */}
-      <main className="max-w-[1200px] mx-auto px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6 items-start">
-
-          {/* ── Left column: form (conflict banner is rendered inside TodoForm) ── */}
-          <div className="lg:sticky lg:top-[81px]">
+          {/* Scrollable content: form + list */}
+          <div
+            style={{
+              flex:       1,
+              overflowY:  'auto',
+              padding:    '20px 20px 24px',
+              display:    'flex',
+              flexDirection: 'column',
+              gap:        '20px',
+            }}
+          >
+            {/* Todo form */}
             <TodoForm onAdd={handleAdd} />
-          </div>
 
-          {/* ── Right column: todo lists ── */}
-          <div>
+            {/* Pending list */}
             {pending.length > 0 && (
               <section>
                 <h2
                   style={{
-                    fontFamily:   "'Rajdhani', sans-serif",
-                    fontSize:     '11px',
-                    fontWeight:   500,
-                    letterSpacing: '0.12em',
+                    fontFamily:    "'Rajdhani', sans-serif",
+                    fontSize:      '10px',
+                    fontWeight:    500,
+                    letterSpacing: '0.14em',
                     textTransform: 'uppercase',
-                    color:        'var(--color-text-secondary)',
-                    marginBottom: '12px',
+                    color:         'rgba(74,155,190,0.7)',
+                    marginBottom:  '10px',
+                    margin:        '0 0 10px',
                   }}
                 >
                   Pending · {pending.length}
@@ -193,17 +255,18 @@ export default function App() {
               </section>
             )}
 
+            {/* Completed list */}
             {completed.length > 0 && (
-              <section className={pending.length > 0 ? 'mt-8' : ''}>
+              <section>
                 <h2
                   style={{
-                    fontFamily:   "'Rajdhani', sans-serif",
-                    fontSize:     '11px',
-                    fontWeight:   500,
-                    letterSpacing: '0.12em',
+                    fontFamily:    "'Rajdhani', sans-serif",
+                    fontSize:      '10px',
+                    fontWeight:    500,
+                    letterSpacing: '0.14em',
                     textTransform: 'uppercase',
-                    color:        'var(--color-text-secondary)',
-                    marginBottom: '12px',
+                    color:         'rgba(74,155,190,0.7)',
+                    margin:        '0 0 10px',
                   }}
                 >
                   Completed · {completed.length}
@@ -214,38 +277,191 @@ export default function App() {
 
             {todos.length === 0 && (
               <div
-                className="flex flex-col items-center justify-center py-20 gap-4"
-                style={{ color: 'var(--color-text-dim)' }}
+                style={{
+                  display:        'flex',
+                  flexDirection:  'column',
+                  alignItems:     'center',
+                  justifyContent: 'center',
+                  paddingTop:     '40px',
+                  gap:            '12px',
+                }}
               >
-                {/* Tron-style empty state grid icon */}
-                <svg width="52" height="52" viewBox="0 0 52 52" fill="none" aria-hidden="true">
-                  <rect x="1" y="1" width="50" height="50" rx="4" stroke="rgba(0,212,255,0.2)" strokeWidth="1"/>
-                  <rect x="8"  y="15" width="36" height="1" fill="rgba(0,212,255,0.15)"/>
-                  <rect x="8"  y="25" width="36" height="1" fill="rgba(0,212,255,0.15)"/>
-                  <rect x="8"  y="35" width="36" height="1" fill="rgba(0,212,255,0.15)"/>
-                  <rect x="8"  y="13" width="3"  height="3" fill="rgba(0,212,255,0.3)"/>
-                  <rect x="8"  y="23" width="3"  height="3" fill="rgba(0,212,255,0.3)"/>
-                  <rect x="8"  y="33" width="3"  height="3" fill="rgba(0,212,255,0.3)"/>
+                <svg width="44" height="44" viewBox="0 0 44 44" fill="none" aria-hidden="true">
+                  <rect x="1" y="1" width="42" height="42" rx="3" stroke="rgba(0,212,255,0.15)" strokeWidth="1"/>
+                  <rect x="7" y="13" width="30" height="1" fill="rgba(0,212,255,0.12)"/>
+                  <rect x="7" y="21" width="30" height="1" fill="rgba(0,212,255,0.12)"/>
+                  <rect x="7" y="29" width="30" height="1" fill="rgba(0,212,255,0.12)"/>
+                  <rect x="7" y="11" width="3" height="3" fill="rgba(0,212,255,0.25)"/>
+                  <rect x="7" y="19" width="3" height="3" fill="rgba(0,212,255,0.25)"/>
+                  <rect x="7" y="27" width="3" height="3" fill="rgba(0,212,255,0.25)"/>
                 </svg>
                 <p
                   style={{
-                    fontFamily:   "'Rajdhani', sans-serif",
-                    fontSize:     '13px',
-                    letterSpacing: '0.06em',
+                    fontFamily:    "'Rajdhani', sans-serif",
+                    fontSize:      '12px',
+                    letterSpacing: '0.08em',
                     textTransform: 'uppercase',
-                    color:        'var(--color-text-dim)',
+                    color:         'rgba(30,77,107,0.9)',
+                    margin:        0,
+                    textAlign:     'center',
                   }}
                 >
-                  No tasks — add one to begin
+                  No tasks — add one above
                 </p>
               </div>
             )}
           </div>
         </div>
-      </main>
 
-      {/* ── Floating ChatBot ── */}
-      <ChatBot />
-    </div>
+        {/* ════════════════════════════════════════
+            CENTER ZONE — Jarvis visualizer
+        ════════════════════════════════════════ */}
+        <div
+          className="center-zone"
+          style={{
+            flex:           1,
+            display:        'flex',
+            flexDirection:  'column',
+            alignItems:     'center',
+            justifyContent: 'center',
+            position:       'relative',
+            overflow:       'hidden',
+          }}
+        >
+          {/* Background scan-line effect */}
+          <div
+            aria-hidden="true"
+            style={{
+              position:    'absolute',
+              inset:       0,
+              background:  'linear-gradient(to bottom, transparent 40%, rgba(0,212,255,0.015) 50%, transparent 60%)',
+              animation:   'scanLine 6s ease-in-out infinite',
+              pointerEvents: 'none',
+            }}
+          />
+
+          <JarvisVisualizer
+            state={visualizerState}
+            onMicClick={handleMicClick}
+            isMuted={isMuted}
+            onMuteToggle={() => setIsMuted((m) => !m)}
+            isSupported={isMicSupported}
+          />
+        </div>
+
+        {/* ════════════════════════════════════════
+            RIGHT ZONE — ChatBot panel
+        ════════════════════════════════════════ */}
+        <div
+          className="right-zone"
+          style={{
+            width:       '35%',
+            minWidth:    '300px',
+            maxWidth:    '480px',
+            flexShrink:  0,
+            borderLeft:  '1px solid rgba(0,212,255,0.15)',
+            display:     'flex',
+            flexDirection: 'column',
+            overflow:    'hidden',
+          }}
+        >
+          <ChatBot
+            onVisualizerState={setVisualizerState}
+            registerMicToggle={registerMicToggle}
+            registerMicSupport={registerMicSupport}
+            isMuted={isMuted}
+          />
+        </div>
+      </div>
+
+      {/* ── Responsive: mobile todo toggle button ── */}
+      <style>{`
+        @media (max-width: 900px) {
+          .left-zone {
+            position: fixed !important;
+            top: 0;
+            left: ${sidebarOpen ? '0' : '-100%'};
+            height: 100svh;
+            width: 85% !important;
+            min-width: unset !important;
+            max-width: 360px;
+            z-index: 200;
+            background: var(--color-bg-base);
+            transition: left 300ms ease;
+            border-right: 1px solid rgba(0,212,255,0.25) !important;
+          }
+          .center-zone {
+            display: flex !important;
+            width: 100% !important;
+            flex: 1 !important;
+          }
+          .right-zone {
+            position: fixed !important;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 45svh;
+            width: 100% !important;
+            min-width: unset !important;
+            max-width: unset !important;
+            border-left: none !important;
+            border-top: 1px solid rgba(0,212,255,0.2);
+            z-index: 100;
+          }
+        }
+      `}</style>
+
+      {/* Mobile sidebar toggle */}
+      <button
+        className="mobile-todo-btn"
+        onClick={() => setSidebarOpen((v) => !v)}
+        aria-label={sidebarOpen ? 'Close task panel' : 'Open task panel'}
+        style={{
+          display:        'none',
+          position:       'fixed',
+          top:            '12px',
+          left:           '12px',
+          zIndex:         300,
+          background:     'rgba(0,212,255,0.08)',
+          border:         '1px solid rgba(0,212,255,0.4)',
+          borderRadius:   '6px',
+          padding:        '8px 12px',
+          color:          '#00d4ff',
+          fontFamily:     "'Rajdhani', sans-serif",
+          fontSize:       '12px',
+          letterSpacing:  '0.1em',
+          textTransform:  'uppercase',
+          cursor:         'pointer',
+        }}
+      >
+        {sidebarOpen ? '✕ Close' : '☰ Tasks'}
+      </button>
+      <style>{`
+        @media (max-width: 900px) {
+          .mobile-todo-btn { display: block !important; }
+        }
+      `}</style>
+
+      {/* Mobile sidebar backdrop */}
+      {sidebarOpen && (
+        <div
+          aria-hidden="true"
+          onClick={() => setSidebarOpen(false)}
+          style={{
+            display:    'none',
+            position:   'fixed',
+            inset:      0,
+            background: 'rgba(0,0,0,0.6)',
+            zIndex:     150,
+          }}
+          className="sidebar-backdrop"
+        />
+      )}
+      <style>{`
+        @media (max-width: 900px) {
+          .sidebar-backdrop { display: block !important; }
+        }
+      `}</style>
+    </>
   );
 }

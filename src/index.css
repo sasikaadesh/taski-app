@@ -67,6 +67,78 @@
   50%       { opacity: 0.2; }
 }
 
+/* ── Jarvis Visualizer animations ─────────────────────────────────────────── */
+
+/* Ring rotation — applied to SVG <g> wrappers */
+@keyframes rotateRingCW {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes rotateRingCCW {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(-360deg); }
+}
+
+/* SVG element opacity breath — idle glow */
+@keyframes jarvisGlowPulse {
+  0%, 100% { opacity: 0.4; }
+  50%       { opacity: 0.85; }
+}
+
+/* Sonar ping: circle that expands and fades outward */
+@keyframes sonarPing {
+  0%   { r: 52;  opacity: 0.9; }
+  100% { r: 145; opacity: 0; }
+}
+
+/* Outer glow circle that expands in speaking state */
+@keyframes speakOuterGlow {
+  0%, 100% { r: 135; opacity: 0.12; }
+  50%       { r: 148; opacity: 0.28; }
+}
+
+/* Processing loading arc spin */
+@keyframes loadingArcSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Center circle pulse — scale via transform */
+@keyframes centerCirclePulse {
+  0%, 100% { transform: scale(1); }
+  50%       { transform: scale(1.1); }
+}
+
+/* Speaking state: visualizer rings scale in/out */
+@keyframes speakingRingScale {
+  0%, 100% { transform: scale(1); }
+  50%       { transform: scale(1.06); }
+}
+
+/* Startup overlay animations */
+@keyframes startupFadeIn {
+  from { opacity: 0; transform: translateY(16px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+
+@keyframes startupSubFade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Sonar radiating line ping */
+@keyframes sonarLinePing {
+  0%   { stroke-dashoffset: 100; opacity: 0.8; }
+  60%  { opacity: 0.5; }
+  100% { stroke-dashoffset: 0;   opacity: 0; }
+}
+
+/* Mute button */
+@keyframes mutePulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
 /* ── Base reset ───────────────────────────────────────────────────────────── */
 *, *::before, *::after {
   box-sizing: border-box;

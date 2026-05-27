@@ -1,8 +1,10 @@
-// ChatBot — floating chat bubble that expands into a conversational panel powered by Claude.
-// Supports: calendar queries, Gmail reading, and composing / sending emails with user confirmation.
+// ChatBot — full-height JARVIS assistant panel (right sidebar).
+// Retains all existing functionality: calendar queries, Gmail read/send,
+// email confirmation cards, voice input, multi-turn chat history.
+// NEW: TTS for Claude responses, visualizer state callbacks.
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { MessageCircle, X, Send, Loader2, Mic } from 'lucide-react';
+import { Send, Loader2, Mic } from 'lucide-react';
 import { callClaude, CHATBOT_SYSTEM, EMAIL_DRAFT_SYSTEM } from '../lib/claude';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import {
@@ -40,7 +42,6 @@ function hasCalendarIntent(text) {
 }
 
 // ── Email SEND intent detection ───────────────────────────────────────────────
-// These patterns specifically detect "compose/send/forward" intent vs. reading.
 
 const EMAIL_SEND_PATTERNS = [
   /\bsend\s+(?:an?\s+)?(?:email|e-mail|mail|message)\b/i,
@@ -48,13 +49,9 @@ const EMAIL_SEND_PATTERNS = [
   /\bcompose\s+(?:an?\s+)?(?:email|e-mail|mail|message)\b/i,
   /\bdraft\s+(?:an?\s+)?(?:email|e-mail|mail|message)\b/i,
   /\bshoot\s+(?:an?\s+)?(?:email|e-mail|mail|message)\b/i,
-  // "forward this/it/the email to..."
   /\bforward\s+(?:this|that|it|the\s+email|the\s+message)?\s*to\s+\w/i,
-  // "reply to James" / "reply to james@..."
   /\breply\s+to\s+[A-Za-z0-9@]/i,
-  // "email john@company.com that..." — email used as a verb with address
   /\bemail\s+[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/i,
-  // "email James about..." / "email him about..." — email as verb with recipient + intent
   /\bemail\s+\w+\s+(?:about|that|saying|regarding|to\s+(?:tell|let|say|inform|ask))\b/i,
 ];
 
@@ -63,7 +60,6 @@ function hasEmailSendIntent(text) {
 }
 
 // ── Email READ intent detection ───────────────────────────────────────────────
-// Only used when send intent is NOT detected first.
 
 const EMAIL_READ_KEYWORDS = [
   'email', 'emails', 'gmail', 'inbox', 'mail', 'mails',
@@ -223,13 +219,11 @@ function buildGmailQuery(text) {
 
 // ── Email send helpers ────────────────────────────────────────────────────────
 
-/** Extract a bare email address from free text, or null. */
 function extractEmailAddress(text) {
   const m = text.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
   return m ? m[0] : null;
 }
 
-/** Extract a human name (likely recipient) from common send-intent phrases. */
 function extractRecipientName(text) {
   const SKIP = new Set(['him','her','them','it','me','us','an','a','the','everyone','all']);
   const patterns = [
@@ -253,33 +247,22 @@ function extractRecipientName(text) {
   return null;
 }
 
-/**
- * Search Gmail for recent emails from `name` and return the sender's email address.
- * Returns null if not found or if Gmail search fails.
- */
 async function findEmailForName(name) {
   try {
     const emails = await searchEmails(`from:${name}`);
     if (emails.length === 0) return null;
     const fromHeader = emails[0].from;
-    // "James Smith <james@example.com>" or plain "james@example.com"
     const angleMatch = fromHeader.match(/<([^>]+@[^>]+)>/);
     const bareMatch  = fromHeader.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
     return angleMatch?.[1] ?? bareMatch?.[0] ?? null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
-/**
- * Ask Claude to draft an email and return { subject, body }.
- * Throws if Claude's response can't be parsed as JSON.
- */
 async function draftEmailWithClaude(userIntent, recipientEmail, calendarContext = '') {
   const systemPrompt = [
     EMAIL_DRAFT_SYSTEM,
-    recipientEmail     ? `\nThe recipient email address is: ${recipientEmail}` : '',
-    calendarContext    ? `\nRelevant calendar context (use to make the email accurate):\n${calendarContext}` : '',
+    recipientEmail  ? `\nThe recipient email address is: ${recipientEmail}` : '',
+    calendarContext ? `\nRelevant calendar context (use to make the email accurate):\n${calendarContext}` : '',
   ].join('');
 
   const raw = await callClaude(
@@ -287,9 +270,8 @@ async function draftEmailWithClaude(userIntent, recipientEmail, calendarContext 
     { system: systemPrompt },
   );
 
-  // Claude may wrap JSON in ```json ... ``` — strip that first
-  const stripped    = raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
-  const jsonMatch   = stripped.match(/\{[\s\S]*\}/);
+  const stripped  = raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+  const jsonMatch = stripped.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error('DRAFT_PARSE_FAILED');
 
   const parsed = JSON.parse(jsonMatch[0]);
@@ -298,31 +280,60 @@ async function draftEmailWithClaude(userIntent, recipientEmail, calendarContext 
   return { subject: parsed.subject, body: parsed.body };
 }
 
+// ── TTS helper ────────────────────────────────────────────────────────────────
+
+/**
+ * Attempt to find the best English male voice.
+ * Must be called after voices are loaded (fine after user interaction).
+ */
+function getBestVoice() {
+  if (!window.speechSynthesis) return null;
+  const voices = window.speechSynthesis.getVoices();
+  return (
+    voices.find((v) => v.name === 'Google UK English Male') ||
+    voices.find((v) => v.lang === 'en-GB' && v.name.toLowerCase().includes('male')) ||
+    voices.find((v) => v.lang.startsWith('en') && v.name.toLowerCase().includes('male')) ||
+    voices.find((v) => v.lang.startsWith('en')) ||
+    null
+  );
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function ChatBot() {
-  const [open, setOpen]       = useState(false);
-  const [messages, setMessages] = useState([]);
-  const [input, setInput]     = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState('');
-
-  // emailDrafts: { [draftId]: { to, subject, body, cc } }
-  // Keyed separately from messages so edits don't require message-array mutation.
-  const [emailDrafts, setEmailDrafts] = useState({});
-
-  // pendingEmailContext: set when we're waiting for the user to supply an email address.
-  // { recipientName: string|null, originalIntent: string }
+/**
+ * Props:
+ *   onVisualizerState(state)  — set the visualizer to 'idle'|'listening'|'processing'|'speaking'
+ *   registerMicToggle(fn)     — register mic toggle fn so the visualizer can call it
+ *   registerMicSupport(bool)  — inform App whether speech API is supported
+ *   isMuted                   — when true, skip TTS
+ */
+export default function ChatBot({
+  onVisualizerState,
+  registerMicToggle,
+  registerMicSupport,
+  isMuted,
+}) {
+  const [messages,           setMessages]           = useState([]);
+  const [input,              setInput]              = useState('');
+  const [loading,            setLoading]            = useState(false);
+  const [error,              setError]              = useState('');
+  const [emailDrafts,        setEmailDrafts]        = useState({});
   const [pendingEmailContext, setPendingEmailContext] = useState(null);
 
-  const bottomRef = useRef(null);
-  const inputRef  = useRef(null);
+  const bottomRef  = useRef(null);
+  const inputRef   = useRef(null);
+  const isMutedRef = useRef(isMuted); // keep ref in sync for use inside callbacks
+  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
 
   // ── Voice input ───────────────────────────────────────────────────────────
   const speech = useSpeechRecognition();
 
-  // Mic toggle — extracted to a ref so the keyboard-shortcut effect never
-  // captures a stale closure (the ref is updated every render).
+  // Inform App of mic support on mount
+  useEffect(() => {
+    registerMicSupport?.(speech.isSupported);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Mic toggle — always-fresh via ref ─────────────────────────────────────
   const micToggleRef = useRef(null);
   micToggleRef.current = useCallback(() => {
     if (speech.isListening) {
@@ -334,23 +345,31 @@ export default function ChatBot() {
     }
   }, [speech]);
 
-  // Sync live transcript → input while (and just after) listening.
-  // Only updates when there's actual speech content so typed text is unaffected.
+  // Register mic toggle with App (so visualizer button can call it)
+  useEffect(() => {
+    registerMicToggle?.(() => micToggleRef.current?.());
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync visualizer state with listening state
+  useEffect(() => {
+    if (speech.isListening) {
+      onVisualizerState?.('listening');
+    } else if (!loading) {
+      onVisualizerState?.('idle');
+    }
+  }, [speech.isListening]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync live transcript → input
   useEffect(() => {
     if (speech.transcript) setInput(speech.transcript);
   }, [speech.transcript]);
 
-  // Stop listening when the chat panel is closed.
-  useEffect(() => {
-    if (!open && speech.isListening) speech.stopListening();
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Translate speech errors → friendly assistant messages.
+  // Translate speech errors → friendly messages
   useEffect(() => {
     if (!speech.error) return;
     const MAP = {
-      PERMISSION_DENIED: "🎤 Microphone access was denied. Please allow microphone access in your browser settings and try again.",
-      NO_SPEECH:         "Didn't catch that — please try again.",
+      PERMISSION_DENIED: "Microphone access was denied. Please allow it in your browser settings.",
+      NO_SPEECH:         "I did not catch that — please try again.",
       NETWORK:           "Voice input requires an internet connection.",
       UNKNOWN:           "Voice input encountered an error. Please try again.",
     };
@@ -362,9 +381,9 @@ export default function ChatBot() {
     speech.clearError();
   }, [speech.error]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Keyboard shortcut: Ctrl+Shift+V (Win/Linux) or Cmd+Shift+V (Mac)
+  // Keyboard shortcut: Ctrl+Shift+V
   useEffect(() => {
-    if (!open || !speech.isSupported) return;
+    if (!speech.isSupported) return;
     const handler = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'V') {
         e.preventDefault();
@@ -373,10 +392,36 @@ export default function ChatBot() {
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [open, speech.isSupported]);
+  }, [speech.isSupported]);
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, open]);
-  useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  // ── TTS ───────────────────────────────────────────────────────────────────
+
+  /**
+   * Speak `text` via Web Speech API.
+   * Sets visualizer to 'speaking' on start, 'idle' on end.
+   * No-op if isMuted is true.
+   */
+  const speakText = useCallback((text) => {
+    if (isMutedRef.current || !window.speechSynthesis) {
+      onVisualizerState?.('idle');
+      return;
+    }
+    window.speechSynthesis.cancel(); // stop any in-progress speech
+
+    const utterance     = new SpeechSynthesisUtterance(text);
+    utterance.rate      = 0.9;
+    utterance.pitch     = 0.85;
+    utterance.volume    = 1.0;
+    utterance.voice     = getBestVoice();
+
+    utterance.onstart = () => onVisualizerState?.('speaking');
+    utterance.onend   = () => onVisualizerState?.('idle');
+    utterance.onerror = () => onVisualizerState?.('idle');
+
+    window.speechSynthesis.speak(utterance);
+  }, [onVisualizerState]);
 
   // ── Email draft state handlers ────────────────────────────────────────────
 
@@ -389,47 +434,33 @@ export default function ChatBot() {
 
   async function handleEmailSend(draftId) {
     const draft = emailDrafts[draftId];
-    // Email is never sent without explicit user confirmation via the Send button.
-    // This function is only called when the user clicks Send in EmailConfirmationCard.
     await sendEmail({ to: draft.to, subject: draft.subject, body: draft.body, cc: draft.cc ?? '' });
 
-    // ── Success: replace the confirmation card with a sent-confirmation message ──
     const sentTime = new Date().toLocaleTimeString('en-US', { timeStyle: 'short' });
     setMessages((prev) =>
       prev.map((m) =>
         m.meta?.draftId === draftId
           ? {
               role:    'assistant',
-              content: `✅ EMAIL SENT\nTo: ${draft.to}\nSubject: ${draft.subject}\nSent at: ${sentTime}`,
+              content: `EMAIL SENT\nTo: ${draft.to}\nSubject: ${draft.subject}\nSent at: ${sentTime}`,
               meta:    { type: 'email-sent', emailData: draft },
             }
           : m
       )
     );
-    // Clean up draft data
-    setEmailDrafts((prev) => {
-      const next = { ...prev };
-      delete next[draftId];
-      return next;
-    });
+    setEmailDrafts((prev) => { const n = { ...prev }; delete n[draftId]; return n; });
   }
 
   function handleEmailCancel(draftId) {
     setMessages((prev) =>
       prev.map((m) =>
         m.meta?.draftId === draftId
-          ? { role: 'assistant', content: "No problem! Email cancelled.", meta: {} }
+          ? { role: 'assistant', content: "Understood. Email has been cancelled.", meta: {} }
           : m
       )
     );
-    setEmailDrafts((prev) => {
-      const next = { ...prev };
-      delete next[draftId];
-      return next;
-    });
+    setEmailDrafts((prev) => { const n = { ...prev }; delete n[draftId]; return n; });
   }
-
-  // ── Internal helper: build draft message & add to chat ───────────────────
 
   function addEmailDraftToChat(recipientEmail, subject, body) {
     const draftId = Date.now().toString();
@@ -448,6 +479,22 @@ export default function ChatBot() {
     return draftId;
   }
 
+  // ── Reconnect Google ──────────────────────────────────────────────────────
+
+  async function handleReconnectGoogle() {
+    clearToken();
+    try {
+      await getGoogleAccessToken();
+      setMessages((prev) => [...prev, {
+        role:    'assistant',
+        content: "Google account reconnected. You may now ask about your calendar, emails, or send messages.",
+        meta:    { checked: null },
+      }].slice(-MAX_MESSAGES));
+    } catch {
+      // User cancelled — nothing to do
+    }
+  }
+
   // ── Main send handler ─────────────────────────────────────────────────────
 
   async function handleSend(e) {
@@ -461,8 +508,11 @@ export default function ChatBot() {
     setInput('');
     setError('');
     setLoading(true);
+    onVisualizerState?.('processing');
 
-    // ── Shared date/timezone context ─────────────────────────────────────────
+    // Cancel any ongoing TTS
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const now      = new Date();
     const todayStr = now.toLocaleDateString('en-US', {
@@ -476,41 +526,36 @@ export default function ChatBot() {
       `Never ask the user what today's date is.`;
 
     // ════════════════════════════════════════════════════════════════════════
-    // BRANCH 1 — Waiting for user to supply an email address
+    // BRANCH 1 — Waiting for the user to supply an email address
     // ════════════════════════════════════════════════════════════════════════
     if (pendingEmailContext) {
       const emailAddr = extractEmailAddress(text) || text.trim();
       const VALID_EMAIL = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
 
       if (VALID_EMAIL.test(emailAddr)) {
-        // Got a valid address — draft the email
         const { originalIntent } = pendingEmailContext;
         setPendingEmailContext(null);
         try {
           const draft = await draftEmailWithClaude(originalIntent, emailAddr);
           addEmailDraftToChat(emailAddr, draft.subject, draft.body);
         } catch {
-          setMessages((prev) => [...prev, {
-            role:    'assistant',
-            content: "I had trouble drafting that email. Could you try again with more details?",
-          }].slice(-MAX_MESSAGES));
+          const msg = "I had trouble drafting that email. Could you try again with more details?";
+          setMessages((prev) => [...prev, { role: 'assistant', content: msg }].slice(-MAX_MESSAGES));
+          speakText(msg);
         }
         setLoading(false);
+        onVisualizerState?.('idle');
         return;
-
       } else if (!text.includes(' ')) {
-        // Single token — looks like they tried to give an address but it's malformed
-        setMessages((prev) => [...prev, {
-          role:    'assistant',
-          content: "That doesn't look like a valid email address. Can you double check it?",
-        }].slice(-MAX_MESSAGES));
+        const msg = "That does not appear to be a valid email address. Could you double-check it?";
+        setMessages((prev) => [...prev, { role: 'assistant', content: msg }].slice(-MAX_MESSAGES));
         setLoading(false);
+        onVisualizerState?.('idle');
+        speakText(msg);
         return;
-
       } else {
-        // Multi-word sentence — user has moved on to a different query; clear context
         setPendingEmailContext(null);
-        // Fall through to normal intent detection below
+        // Fall through to normal intent detection
       }
     }
 
@@ -521,51 +566,45 @@ export default function ChatBot() {
       try {
         let recipientEmail = extractEmailAddress(text);
 
-        // If no email address, try to find it by name via Gmail
         if (!recipientEmail) {
           const name = extractRecipientName(text);
           if (name) {
             recipientEmail = await findEmailForName(name);
             if (!recipientEmail) {
-              // Name found but no email — ask the user
+              const msg = `What is ${name}'s email address?`;
               setMessages((prev) => [...prev, {
-                role:    'assistant',
-                content: `What is ${name}'s email address?`,
-                meta:    { waitingForEmail: true },
+                role: 'assistant', content: msg, meta: { waitingForEmail: true },
               }].slice(-MAX_MESSAGES));
               setPendingEmailContext({ recipientName: name, originalIntent: text });
               setLoading(false);
+              onVisualizerState?.('idle');
+              speakText(msg);
               return;
             }
           } else {
-            // No recipient at all — ask
+            const msg = "Who would you like to send this to? Please provide their email address.";
             setMessages((prev) => [...prev, {
-              role:    'assistant',
-              content: "Who would you like to send this to? Please provide their email address.",
-              meta:    { waitingForEmail: true },
+              role: 'assistant', content: msg, meta: { waitingForEmail: true },
             }].slice(-MAX_MESSAGES));
             setPendingEmailContext({ recipientName: null, originalIntent: text });
             setLoading(false);
+            onVisualizerState?.('idle');
+            speakText(msg);
             return;
           }
         }
 
-        // Optionally fetch calendar context if the message also involves scheduling
         let calendarContext = '';
         if (hasCalendarIntent(text)) {
           try {
             const { start, end } = detectDateRange(text);
             const events          = await getCalendarEventsForRange(start, end);
             calendarContext       = buildCalendarContext(events, start, end);
-          } catch {
-            // Calendar context is optional — ignore errors
-          }
+          } catch { /* optional */ }
         }
 
-        // Draft the email with Claude
         const draft = await draftEmailWithClaude(text, recipientEmail, calendarContext);
 
-        // If calendar context was fetched, also answer the calendar question in a text message
         if (calendarContext) {
           const calSystem =
             `${CHATBOT_SYSTEM}\n\n${dateContext}\n\n` +
@@ -580,16 +619,23 @@ export default function ChatBot() {
             ...prev,
             { role: 'assistant', content: calReply, meta: { checked: 'calendar' } },
           ].slice(-MAX_MESSAGES));
+          speakText(calReply);
         }
 
         addEmailDraftToChat(recipientEmail, draft.subject, draft.body);
 
+        // If calendarContext triggered TTS already that's fine; if not, still need
+        // to announce the draft is ready and reset the visualizer.
+        if (!calendarContext) {
+          const draftMsg = "I have prepared an email draft for your review.";
+          speakText(draftMsg); // handles visualizer: 'speaking' → 'idle'
+        }
+
       } catch (err) {
         if (import.meta.env.DEV) console.warn('[Taski Email Draft]', err);
-        setMessages((prev) => [...prev, {
-          role:    'assistant',
-          content: "I had trouble drafting that email. Please try again with more details about what you'd like to say.",
-        }].slice(-MAX_MESSAGES));
+        const msg = "I had trouble drafting that email. Please try again with more details about what you would like to say.";
+        setMessages((prev) => [...prev, { role: 'assistant', content: msg }].slice(-MAX_MESSAGES));
+        speakText(msg);
       }
 
       setLoading(false);
@@ -597,7 +643,7 @@ export default function ChatBot() {
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // BRANCH 3 — Calendar / Gmail READ / General (existing logic)
+    // BRANCH 3 — Calendar / Gmail READ / General
     // ════════════════════════════════════════════════════════════════════════
     try {
       let system     = `${CHATBOT_SYSTEM}\n\n${dateContext}`;
@@ -631,57 +677,46 @@ export default function ChatBot() {
         let calendarBlock = null;
         let emailBlock    = null;
 
-        // ── Calendar result ───────────────────────────────────────────────
         if (wantsCalendar) {
           if (calendarResult.status === 'fulfilled') {
             calendarBlock = calendarResult.value;
           } else {
             const msg = calendarResult.reason?.message ?? 'Unknown error';
-            setMessages((prev) => [...prev, {
-              role:    'assistant',
-              content: msg.toLowerCase().includes('cancel')
-                ? "I need access to your Google Calendar to answer that. Please try again and complete the sign-in when prompted."
-                : `I couldn't load your calendar right now (${msg}). Please try again in a moment.`,
-              meta: { checked: null },
-            }].slice(-MAX_MESSAGES));
+            const reply = msg.toLowerCase().includes('cancel')
+              ? "I need access to your Google Calendar to answer that. Please try again and complete the sign-in when prompted."
+              : `I was unable to load your calendar just now (${msg}). Please try again in a moment.`;
+            setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { checked: null } }].slice(-MAX_MESSAGES));
+            speakText(reply);
             setLoading(false);
             return;
           }
         }
 
-        // ── Email result ──────────────────────────────────────────────────
         if (wantsEmail) {
           if (emailResult.status === 'fulfilled') {
             emailBlock = emailResult.value?.block ?? null;
           } else {
             const errMsg = emailResult.reason?.message ?? '';
+            let reply = null;
             if (errMsg === 'GMAIL_AUTH_CANCELLED') {
-              setMessages((prev) => [...prev, {
-                role:    'assistant',
-                content: "To search your Gmail I need Google account access. Please try again and complete the sign-in when prompted.",
-                meta:    { reconnectGmail: true },
-              }].slice(-MAX_MESSAGES));
-              if (!wantsCalendar) { setLoading(false); return; }
+              reply = "To search your Gmail I need Google account access. Please try again and complete the sign-in when prompted.";
+              setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { reconnectGmail: true } }].slice(-MAX_MESSAGES));
             } else if (errMsg === 'GMAIL_SCOPE_MISSING') {
-              setMessages((prev) => [...prev, {
-                role:    'assistant',
-                content: "Gmail access isn't enabled for this session yet.",
-                meta:    { reconnectGmail: true },
-              }].slice(-MAX_MESSAGES));
-              if (!wantsCalendar) { setLoading(false); return; }
+              reply = "Gmail access is not yet enabled for this session.";
+              setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { reconnectGmail: true } }].slice(-MAX_MESSAGES));
             } else if (errMsg === 'GMAIL_RATE_LIMIT') {
-              setMessages((prev) => [...prev, {
-                role:    'assistant',
-                content: "Gmail is receiving too many requests right now — please try again in a moment.",
-              }].slice(-MAX_MESSAGES));
-              if (!wantsCalendar) { setLoading(false); return; }
+              reply = "Gmail is receiving too many requests — please try again in a moment.";
+              setMessages((prev) => [...prev, { role: 'assistant', content: reply }].slice(-MAX_MESSAGES));
             } else {
               if (import.meta.env.DEV) console.warn('[Taski Gmail]', errMsg);
+            }
+            if (reply) {
+              speakText(reply);
+              if (!wantsCalendar) { setLoading(false); return; }
             }
           }
         }
 
-        // ── Build combined system prompt ──────────────────────────────────
         const hasCalData   = calendarBlock !== null;
         const hasEmailData = emailBlock    !== null;
 
@@ -709,33 +744,24 @@ export default function ChatBot() {
         }
       }
 
-      const apiMessages  = next.map(({ role, content }) => ({ role, content }));
-      const reply        = await callClaude(apiMessages, { system });
+      const apiMessages = next.map(({ role, content }) => ({ role, content }));
+      const reply       = await callClaude(apiMessages, { system });
+
       setMessages((prev) => [...prev, {
         role:    'assistant',
         content: reply,
         meta:    { checked: checkedTag },
       }].slice(-MAX_MESSAGES));
 
+      speakText(reply);
+
     } catch (err) {
       setError(err.message);
+      onVisualizerState?.('idle');
     } finally {
       setLoading(false);
-    }
-  }
-
-  // ── Reconnect Google handler ──────────────────────────────────────────────
-  async function handleReconnectGoogle() {
-    clearToken();
-    try {
-      await getGoogleAccessToken();
-      setMessages((prev) => [...prev, {
-        role:    'assistant',
-        content: "Google account reconnected! You can now ask about emails, calendar, or send emails.",
-        meta:    { checked: null },
-      }].slice(-MAX_MESSAGES));
-    } catch {
-      // User cancelled — nothing to do
+      // Note: visualizer goes to 'speaking' via TTS onstart, or 'idle' via TTS onend.
+      // If muted, speakText() calls onVisualizerState('idle') directly.
     }
   }
 
@@ -743,24 +769,25 @@ export default function ChatBot() {
   function SourceTag({ checked }) {
     if (!checked) return null;
     const label =
-      checked === 'both'     ? '📅✉️  CALENDAR + GMAIL' :
-      checked === 'calendar' ? '📅  CALENDAR'            :
-      checked === 'gmail'    ? '✉️  GMAIL'               : null;
+      checked === 'both'     ? 'CALENDAR + GMAIL' :
+      checked === 'calendar' ? 'CALENDAR'           :
+      checked === 'gmail'    ? 'GMAIL'              : null;
     if (!label) return null;
     return (
       <span
         style={{
           display:       'inline-block',
           fontFamily:    "'Rajdhani', sans-serif",
-          fontSize:      '10px',
-          fontWeight:    500,
-          letterSpacing: '0.08em',
-          padding:       '2px 8px',
+          fontSize:      '9px',
+          fontWeight:    600,
+          letterSpacing: '0.14em',
+          padding:       '2px 7px',
           borderRadius:  '100px',
           marginBottom:  '4px',
-          background:    'var(--color-neon-cyan-glow)',
-          border:        '1px solid var(--color-neon-cyan-border)',
-          color:         'var(--color-neon-cyan)',
+          background:    'rgba(0,212,255,0.08)',
+          border:        '1px solid rgba(0,212,255,0.25)',
+          color:         '#00d4ff',
+          textTransform: 'uppercase',
         }}
       >
         {label}
@@ -770,464 +797,471 @@ export default function ChatBot() {
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <>
-      {/* ── Chat panel ── */}
-      {open && (
+    <div
+      style={{
+        display:        'flex',
+        flexDirection:  'column',
+        height:         '100%',
+        background:     'var(--color-bg-muted)',
+        overflow:       'hidden',
+      }}
+    >
+      {/* ── Header ── */}
+      <div
+        style={{
+          padding:      '18px 20px 14px',
+          borderBottom: '1px solid rgba(0,212,255,0.12)',
+          background:   'rgba(0,212,255,0.02)',
+          flexShrink:   0,
+        }}
+      >
         <div
-          className="fixed bottom-24 right-6 flex flex-col overflow-hidden z-50"
           style={{
-            width:        '340px',
-            height:       '500px',
-            background:   'var(--color-bg-muted)',
-            border:       '1px solid var(--color-border)',
-            borderRadius: '6px',
-            boxShadow:    '0 0 40px rgba(0,0,0,0.8), 0 0 20px rgba(0,212,255,0.1)',
+            fontFamily:    "'Orbitron', sans-serif",
+            fontSize:      '16px',
+            fontWeight:    700,
+            letterSpacing: '0.12em',
+            color:         '#00d4ff',
+            textShadow:    '0 0 16px rgba(0,212,255,0.7)',
+            lineHeight:    1,
           }}
         >
-          {/* ── Header ── */}
+          JARVIS
+        </div>
+        <div
+          style={{
+            fontFamily:    "'Rajdhani', sans-serif",
+            fontSize:      '10px',
+            letterSpacing: '0.2em',
+            color:         'rgba(0,212,255,0.4)',
+            textTransform: 'uppercase',
+            marginTop:     '4px',
+          }}
+        >
+          AI ASSISTANT ONLINE
+        </div>
+      </div>
+
+      {/* ── Messages area ── */}
+      <div
+        style={{
+          flex:          1,
+          overflowY:     'auto',
+          padding:       '16px',
+          display:       'flex',
+          flexDirection: 'column',
+          gap:           '12px',
+        }}
+      >
+        {messages.length === 0 && (
           <div
-            className="flex items-center justify-between px-4 py-3 flex-shrink-0"
             style={{
-              background:   'var(--color-bg-raised)',
-              borderBottom: '1px solid var(--color-border)',
-              boxShadow:    '0 1px 15px var(--color-neon-cyan-glow)',
+              display:        'flex',
+              flexDirection:  'column',
+              alignItems:     'center',
+              justifyContent: 'center',
+              height:         '100%',
+              gap:            '12px',
+              opacity:        0.5,
+              paddingBottom:  '40px',
             }}
           >
-            <div className="flex items-center gap-2">
-              <MessageCircle size={16} style={{ color: 'var(--color-neon-cyan)' }} aria-hidden="true" />
-              <span
-                style={{
-                  fontFamily:    "'Orbitron', sans-serif",
-                  fontSize:      '13px',
-                  fontWeight:    700,
-                  letterSpacing: '0.08em',
-                  color:         'var(--color-neon-cyan)',
-                  textShadow:    '0 0 12px rgba(0,212,255,0.6)',
-                }}
-              >
-                TASKI AI
-              </span>
-            </div>
-            <button
-              onClick={() => setOpen(false)}
-              aria-label="Close chat"
-              style={{ color: 'var(--color-text-dim)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', transition: 'color 150ms' }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-neon-cyan)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-dim)'; }}
+            <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+              <circle cx="20" cy="20" r="18" stroke="#00d4ff" strokeWidth="1" opacity="0.4"/>
+              <circle cx="20" cy="20" r="12" stroke="#00d4ff" strokeWidth="1" opacity="0.3" strokeDasharray="6 4"/>
+              <circle cx="20" cy="20" r="5"  fill="#00d4ff" opacity="0.25"/>
+            </svg>
+            <p
+              style={{
+                fontFamily:    "'Rajdhani', sans-serif",
+                fontSize:      '12px',
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                color:         'rgba(0,212,255,0.5)',
+                textAlign:     'center',
+                lineHeight:    1.6,
+                margin:        0,
+              }}
             >
-              <X size={16} aria-hidden="true" />
-            </button>
+              Good day.<br />
+              Ask me about your schedule,<br />
+              emails, or tasks.
+            </p>
           </div>
+        )}
 
-          {/* ── Messages ── */}
-          <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-3">
-            {messages.length === 0 && (
-              <p
-                style={{
-                  fontFamily:    "'Rajdhani', sans-serif",
-                  fontSize:      '13px',
-                  letterSpacing: '0.04em',
-                  color:         'var(--color-text-secondary)',
-                  textAlign:     'center',
-                  marginTop:     '32px',
-                  lineHeight:    1.6,
-                }}
-              >
-                Hi! I'm Taski AI.<br />
-                Ask me about tasks, schedule, emails,<br />
-                or ask me to send an email for you.
-              </p>
-            )}
-
-            {messages.map((msg, i) => (
-              <div
-                key={i}
-                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                {msg.role === 'user' ? (
-                  /* ── User bubble ── */
-                  <div
-                    style={{
-                      maxWidth:      '82%',
-                      padding:       '8px 12px',
-                      borderRadius:  '4px',
-                      fontFamily:    "'Rajdhani', sans-serif",
-                      fontSize:      '14px',
-                      letterSpacing: '0.02em',
-                      lineHeight:    1.5,
-                      background:    'rgba(0,212,255,0.08)',
-                      border:        '1px solid var(--color-neon-cyan-border)',
-                      color:         'var(--color-text-primary)',
-                    }}
-                  >
-                    {msg.content}
-                  </div>
-
-                ) : msg.meta?.type === 'email-confirm' && emailDrafts[msg.meta.draftId] ? (
-                  /* ── Email confirmation card ── */
-                  <div style={{ width: '100%' }}>
-                    <EmailConfirmationCard
-                      draft={emailDrafts[msg.meta.draftId]}
-                      onChange={(field, value) => handleEmailDraftChange(msg.meta.draftId, field, value)}
-                      onSend={() => handleEmailSend(msg.meta.draftId)}
-                      onCancel={() => handleEmailCancel(msg.meta.draftId)}
-                    />
-                  </div>
-
-                ) : msg.meta?.type === 'email-sent' ? (
-                  /* ── Email sent confirmation ── */
-                  <div
-                    style={{
-                      maxWidth:      '90%',
-                      padding:       '10px 13px',
-                      borderRadius:  '4px',
-                      fontFamily:    "'Rajdhani', sans-serif",
-                      fontSize:      '13px',
-                      letterSpacing: '0.02em',
-                      lineHeight:    1.6,
-                      whiteSpace:    'pre-line',
-                      background:    'rgba(0,255,136,0.06)',
-                      border:        '1px solid rgba(0,255,136,0.3)',
-                      color:         'var(--color-success)',
-                      boxShadow:     '0 0 16px rgba(0,255,136,0.12)',
-                    }}
-                  >
-                    {msg.content}
-                  </div>
-
-                ) : (
-                  /* ── Normal assistant bubble ── */
-                  <div style={{ maxWidth: '82%', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '3px' }}>
-                    <SourceTag checked={msg.meta?.checked} />
-                    <div
-                      style={{
-                        padding:       '8px 12px',
-                        borderRadius:  '4px',
-                        fontFamily:    "'Rajdhani', sans-serif",
-                        fontSize:      '14px',
-                        letterSpacing: '0.02em',
-                        lineHeight:    1.5,
-                        background:    'var(--color-bg-raised)',
-                        border:        '1px solid var(--color-border)',
-                        color:         'var(--color-text-primary)',
-                        whiteSpace:    'pre-line',
-                        width:         '100%',
-                      }}
-                    >
-                      {msg.content}
-
-                      {/* Reconnect Google link */}
-                      {msg.meta?.reconnectGmail && (
-                        <button
-                          onClick={handleReconnectGoogle}
-                          style={{
-                            display:             'block',
-                            marginTop:           '8px',
-                            fontFamily:          "'Rajdhani', sans-serif",
-                            fontSize:            '12px',
-                            letterSpacing:       '0.04em',
-                            color:               'var(--color-neon-cyan)',
-                            background:          'none',
-                            border:              'none',
-                            cursor:              'pointer',
-                            padding:             0,
-                            textDecoration:      'underline',
-                            textUnderlineOffset: '3px',
-                            transition:          'opacity 150ms',
-                          }}
-                          onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.7'; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
-                        >
-                          Reconnect Google →
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {/* ── Thinking indicator ── */}
-            {loading && (
-              <div className="flex justify-start">
-                <div
-                  style={{
-                    padding:     '8px 12px',
-                    borderRadius: '4px',
-                    background:  'var(--color-bg-raised)',
-                    border:      '1px solid var(--color-border)',
-                    display:     'flex',
-                    alignItems:  'center',
-                    gap:         '8px',
-                  }}
-                >
-                  <Loader2 size={13} className="animate-spin" style={{ color: 'var(--color-neon-cyan)' }} aria-hidden="true" />
-                  <span
-                    style={{
-                      fontFamily:    "'Rajdhani', sans-serif",
-                      fontSize:      '12px',
-                      letterSpacing: '0.06em',
-                      textTransform: 'uppercase',
-                      color:         'var(--color-text-secondary)',
-                    }}
-                  >
-                    Processing…
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {error && (
-              <p
-                style={{
-                  fontFamily:    "'Rajdhani', sans-serif",
-                  fontSize:      '12px',
-                  letterSpacing: '0.04em',
-                  color:         'var(--color-danger)',
-                  textAlign:     'center',
-                  padding:       '0 8px',
-                }}
-              >
-                {error}
-              </p>
-            )}
-            <div ref={bottomRef} />
-          </div>
-
-          {/* ── Input area ── */}
-          <form
-            onSubmit={handleSend}
-            className="flex-shrink-0 p-3"
-            style={{ borderTop: '1px solid var(--color-border)' }}
+        {messages.map((msg, i) => (
+          <div
+            key={i}
+            style={{
+              display:        'flex',
+              justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
+            }}
           >
-            {/* ── Listening indicator (shown only while mic is active) ── */}
-            {speech.isListening && (
+            {msg.role === 'user' ? (
+              /* ── User bubble ── */
               <div
                 style={{
-                  display:        'flex',
-                  alignItems:     'center',
-                  gap:            '5px',
-                  marginBottom:   '6px',
-                  paddingLeft:    '2px',
-                }}
-              >
-                <span
-                  style={{
-                    color:     'var(--color-danger)',
-                    fontSize:  '10px',
-                    animation: 'recordPulse 1s ease-in-out infinite',
-                    lineHeight: 1,
-                  }}
-                  aria-hidden="true"
-                >
-                  ●
-                </span>
-                <span
-                  style={{
-                    fontFamily:    "'Rajdhani', sans-serif",
-                    fontSize:      '10px',
-                    fontWeight:    600,
-                    letterSpacing: '0.14em',
-                    textTransform: 'uppercase',
-                    color:         'var(--color-danger)',
-                  }}
-                >
-                  Listening…
-                </span>
-                <span
-                  style={{
-                    fontFamily:    "'Rajdhani', sans-serif",
-                    fontSize:      '10px',
-                    letterSpacing: '0.06em',
-                    color:         'var(--color-text-dim)',
-                    marginLeft:    '4px',
-                  }}
-                >
-                  Ctrl+Shift+V to stop
-                </span>
-              </div>
-            )}
-
-            {/* ── Row: [🎤] [input] [➤] ── */}
-            <div className="flex gap-2">
-
-              {/* ── Mic button — hidden when Web Speech API is not supported ── */}
-              {speech.isSupported && (
-                <button
-                  type="button"
-                  onClick={() => micToggleRef.current?.()}
-                  aria-label={speech.isListening ? 'Stop voice input' : 'Start voice input'}
-                  aria-pressed={speech.isListening}
-                  style={{
-                    background:     'transparent',
-                    border:         speech.isListening
-                      ? '1px solid var(--color-neon-cyan)'
-                      : '1px solid var(--color-border)',
-                    borderRadius:   '4px',
-                    padding:        '8px 10px',
-                    color:          speech.isListening
-                      ? 'var(--color-neon-cyan)'
-                      : 'var(--color-text-secondary)',
-                    cursor:         'pointer',
-                    display:        'flex',
-                    alignItems:     'center',
-                    justifyContent: 'center',
-                    minWidth:       '40px',
-                    minHeight:      '40px',
-                    animation:      speech.isListening
-                      ? 'glowPulse 2s ease-in-out infinite'
-                      : 'none',
-                    boxShadow:      speech.isListening
-                      ? '0 0 12px rgba(0,212,255,0.4)'
-                      : 'none',
-                    transition:     'border-color 200ms, color 200ms, box-shadow 200ms',
-                    flexShrink:     0,
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!speech.isListening) {
-                      e.currentTarget.style.color       = 'var(--color-neon-cyan)';
-                      e.currentTarget.style.borderColor = 'var(--color-neon-cyan-border)';
-                      e.currentTarget.style.boxShadow   = '0 0 8px rgba(0,212,255,0.3)';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!speech.isListening) {
-                      e.currentTarget.style.color       = 'var(--color-text-secondary)';
-                      e.currentTarget.style.borderColor = 'var(--color-border)';
-                      e.currentTarget.style.boxShadow   = 'none';
-                    }
-                  }}
-                  onMouseDown={(e) => { e.currentTarget.style.transform = 'scale(0.92)'; }}
-                  onMouseUp={(e)   => { e.currentTarget.style.transform = 'scale(1)'; }}
-                >
-                  <Mic size={15} aria-hidden="true" />
-                </button>
-              )}
-
-              {/* ── Text input ── */}
-              <input
-                ref={inputRef}
-                type="text"
-                placeholder={
-                  speech.isListening    ? "Listening — speak now…"  :
-                  pendingEmailContext   ? "Enter email address…"     :
-                                         "Ask about tasks, schedule, emails…"
-                }
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                disabled={loading}
-                style={{
-                  flex:          1,
-                  background:    'var(--color-bg-raised)',
-                  border:        speech.isListening
-                    ? '1px solid var(--color-border-bright)'
-                    : '1px solid var(--color-border)',
+                  maxWidth:      '84%',
+                  padding:       '9px 13px',
                   borderRadius:  '4px',
-                  padding:       '8px 12px',
-                  color:         speech.isListening
-                    ? 'var(--color-text-secondary)'
-                    : 'var(--color-text-primary)',
                   fontFamily:    "'Rajdhani', sans-serif",
                   fontSize:      '14px',
                   letterSpacing: '0.02em',
-                  outline:       'none',
-                  caretColor:    'var(--color-neon-cyan)',
-                  transition:    'border-color 200ms, box-shadow 200ms, color 200ms',
-                  opacity:       loading ? 0.5 : 1,
-                  boxShadow:     speech.isListening
-                    ? '0 0 0 3px var(--color-neon-cyan-glow), 0 0 12px rgba(0,212,255,0.25)'
-                    : 'none',
+                  lineHeight:    1.5,
+                  background:    'rgba(0,212,255,0.07)',
+                  border:        '1px solid rgba(0,212,255,0.28)',
+                  color:         'var(--color-text-primary)',
                 }}
-                onFocus={(e) => {
-                  if (!speech.isListening) {
-                    e.target.style.borderColor = 'var(--color-border-bright)';
-                    e.target.style.boxShadow   = '0 0 0 3px var(--color-neon-cyan-glow)';
-                  }
-                }}
-                onBlur={(e) => {
-                  if (!speech.isListening) {
-                    e.target.style.borderColor = 'var(--color-border)';
-                    e.target.style.boxShadow   = 'none';
-                  }
-                }}
-              />
-
-              {/* ── Send button ── */}
-              <button
-                type="submit"
-                disabled={loading || !input.trim()}
-                aria-label="Send message"
-                style={{
-                  background:     'transparent',
-                  border:         '1px solid var(--color-neon-cyan)',
-                  borderRadius:   '4px',
-                  padding:        '8px 12px',
-                  color:          'var(--color-neon-cyan)',
-                  cursor:         loading || !input.trim() ? 'not-allowed' : 'pointer',
-                  display:        'flex',
-                  alignItems:     'center',
-                  justifyContent: 'center',
-                  minWidth:       '44px',
-                  minHeight:      '40px',
-                  opacity:        loading || !input.trim() ? 0.35 : 1,
-                  transition:     'box-shadow 250ms, background 250ms, transform 150ms',
-                  flexShrink:     0,
-                }}
-                onMouseEnter={(e) => {
-                  if (!loading && input.trim()) {
-                    e.currentTarget.style.boxShadow = '0 0 10px rgba(0,212,255,0.5)';
-                    e.currentTarget.style.background = 'var(--color-neon-cyan-glow)';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.boxShadow = 'none';
-                  e.currentTarget.style.background = 'transparent';
-                }}
-                onMouseDown={(e) => { e.currentTarget.style.transform = 'scale(0.96)'; }}
-                onMouseUp={(e)   => { e.currentTarget.style.transform = 'scale(1)'; }}
               >
-                <Send size={15} aria-hidden="true" />
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+                {msg.content}
+              </div>
 
-      {/* ── Floating bubble ── */}
-      <button
-        onClick={() => setOpen((v) => !v)}
-        aria-label={open ? 'Close Taski Assistant' : 'Open Taski Assistant'}
+            ) : msg.meta?.type === 'email-confirm' && emailDrafts[msg.meta.draftId] ? (
+              /* ── Email confirmation card ── */
+              <div style={{ width: '100%' }}>
+                <EmailConfirmationCard
+                  draft={emailDrafts[msg.meta.draftId]}
+                  onChange={(field, value) => handleEmailDraftChange(msg.meta.draftId, field, value)}
+                  onSend={() => handleEmailSend(msg.meta.draftId)}
+                  onCancel={() => handleEmailCancel(msg.meta.draftId)}
+                />
+              </div>
+
+            ) : msg.meta?.type === 'email-sent' ? (
+              /* ── Email sent confirmation ── */
+              <div
+                style={{
+                  maxWidth:      '90%',
+                  padding:       '10px 13px',
+                  borderRadius:  '4px',
+                  fontFamily:    "'Rajdhani', sans-serif",
+                  fontSize:      '13px',
+                  letterSpacing: '0.02em',
+                  lineHeight:    1.6,
+                  whiteSpace:    'pre-line',
+                  background:    'rgba(0,255,136,0.05)',
+                  border:        '1px solid rgba(0,255,136,0.28)',
+                  color:         'var(--color-success)',
+                  boxShadow:     '0 0 14px rgba(0,255,136,0.1)',
+                }}
+              >
+                {msg.content}
+              </div>
+
+            ) : (
+              /* ── Normal JARVIS bubble ── */
+              <div
+                style={{
+                  maxWidth:       '84%',
+                  display:        'flex',
+                  flexDirection:  'column',
+                  alignItems:     'flex-start',
+                  gap:            '3px',
+                }}
+              >
+                <SourceTag checked={msg.meta?.checked} />
+                <div
+                  style={{
+                    padding:       '9px 13px',
+                    borderRadius:  '4px',
+                    fontFamily:    "'Rajdhani', sans-serif",
+                    fontSize:      '14px',
+                    letterSpacing: '0.02em',
+                    lineHeight:    1.55,
+                    background:    'var(--color-bg-raised)',
+                    border:        '1px solid rgba(0,212,255,0.15)',
+                    color:         'var(--color-text-primary)',
+                    whiteSpace:    'pre-line',
+                    width:         '100%',
+                  }}
+                >
+                  {/* "JARVIS:" prefix */}
+                  <span
+                    style={{
+                      fontFamily:    "'Orbitron', sans-serif",
+                      fontSize:      '9px',
+                      fontWeight:    700,
+                      letterSpacing: '0.15em',
+                      color:         '#00d4ff',
+                      display:       'block',
+                      marginBottom:  '4px',
+                      opacity:       0.7,
+                    }}
+                  >
+                    JARVIS
+                  </span>
+                  {msg.content}
+
+                  {/* Reconnect Google link */}
+                  {msg.meta?.reconnectGmail && (
+                    <button
+                      onClick={handleReconnectGoogle}
+                      style={{
+                        display:             'block',
+                        marginTop:           '8px',
+                        fontFamily:          "'Rajdhani', sans-serif",
+                        fontSize:            '12px',
+                        letterSpacing:       '0.04em',
+                        color:               '#00d4ff',
+                        background:          'none',
+                        border:              'none',
+                        cursor:              'pointer',
+                        padding:             0,
+                        textDecoration:      'underline',
+                        textUnderlineOffset: '3px',
+                      }}
+                    >
+                      Reconnect Google →
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+
+        {/* ── Thinking indicator ── */}
+        {loading && (
+          <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+            <div
+              style={{
+                padding:      '9px 13px',
+                borderRadius: '4px',
+                background:   'var(--color-bg-raised)',
+                border:       '1px solid rgba(0,212,255,0.15)',
+                display:      'flex',
+                alignItems:   'center',
+                gap:          '8px',
+              }}
+            >
+              <Loader2 size={13} className="animate-spin" style={{ color: '#00d4ff' }} aria-hidden="true" />
+              <span
+                style={{
+                  fontFamily:    "'Rajdhani', sans-serif",
+                  fontSize:      '11px',
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  color:         'rgba(0,212,255,0.6)',
+                }}
+              >
+                Processing…
+              </span>
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <p
+            style={{
+              fontFamily:    "'Rajdhani', sans-serif",
+              fontSize:      '12px',
+              color:         'var(--color-danger)',
+              textAlign:     'center',
+              padding:       '0 8px',
+              margin:        0,
+            }}
+          >
+            {error}
+          </p>
+        )}
+
+        <div ref={bottomRef} />
+      </div>
+
+      {/* ── Input area ── */}
+      <form
+        onSubmit={handleSend}
         style={{
-          position:       'fixed',
-          bottom:         '24px',
-          right:          '24px',
-          zIndex:         50,
-          background:     'transparent',
-          borderRadius:   '9999px',
-          width:          '52px',
-          height:         '52px',
-          border:         '2px solid var(--color-neon-cyan)',
-          cursor:         'pointer',
-          display:        'flex',
-          alignItems:     'center',
-          justifyContent: 'center',
-          color:          'var(--color-neon-cyan)',
-          animation:      open ? 'none' : 'glowPulse 2s ease-in-out infinite',
-          transition:     'box-shadow 250ms cubic-bezier(0.16,1,0.3,1), transform 150ms',
+          padding:    '12px 14px',
+          borderTop:  '1px solid rgba(0,212,255,0.12)',
+          flexShrink: 0,
+          background: 'rgba(0,0,0,0.2)',
         }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.boxShadow = '0 0 30px rgba(0,212,255,0.8), inset 0 0 20px rgba(0,212,255,0.1)';
-          e.currentTarget.style.animation = 'none';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.boxShadow = '';
-          if (!open) e.currentTarget.style.animation = 'glowPulse 2s ease-in-out infinite';
-        }}
-        onMouseDown={(e) => { e.currentTarget.style.transform = 'scale(0.92)'; }}
-        onMouseUp={(e)   => { e.currentTarget.style.transform = 'scale(1)'; }}
       >
-        {open ? <X size={20} aria-hidden="true" /> : <MessageCircle size={20} aria-hidden="true" />}
-      </button>
-    </>
+        {/* Listening indicator */}
+        {speech.isListening && (
+          <div
+            style={{
+              display:      'flex',
+              alignItems:   'center',
+              gap:          '5px',
+              marginBottom: '8px',
+              paddingLeft:  '2px',
+            }}
+          >
+            <span
+              style={{
+                color:     'var(--color-danger)',
+                fontSize:  '9px',
+                animation: 'recordPulse 1s ease-in-out infinite',
+                lineHeight: 1,
+              }}
+              aria-hidden="true"
+            >
+              ●
+            </span>
+            <span
+              style={{
+                fontFamily:    "'Rajdhani', sans-serif",
+                fontSize:      '10px',
+                fontWeight:    600,
+                letterSpacing: '0.14em',
+                textTransform: 'uppercase',
+                color:         'var(--color-danger)',
+              }}
+            >
+              Listening…
+            </span>
+            <span
+              style={{
+                fontFamily:    "'Rajdhani', sans-serif",
+                fontSize:      '9px',
+                letterSpacing: '0.06em',
+                color:         'rgba(0,212,255,0.35)',
+                marginLeft:    '6px',
+              }}
+            >
+              Ctrl+Shift+V to stop
+            </span>
+          </div>
+        )}
+
+        {/* Row: [Mic] [input] [Send] */}
+        <div style={{ display: 'flex', gap: '8px' }}>
+
+          {/* Mic button */}
+          {speech.isSupported && (
+            <button
+              type="button"
+              onClick={() => micToggleRef.current?.()}
+              aria-label={speech.isListening ? 'Stop voice input' : 'Start voice input'}
+              aria-pressed={speech.isListening}
+              style={{
+                background:     'transparent',
+                border:         speech.isListening
+                  ? '1px solid #00d4ff'
+                  : '1px solid rgba(0,212,255,0.2)',
+                borderRadius:   '4px',
+                padding:        '0 10px',
+                color:          speech.isListening ? '#00d4ff' : 'rgba(0,212,255,0.45)',
+                cursor:         'pointer',
+                display:        'flex',
+                alignItems:     'center',
+                justifyContent: 'center',
+                minWidth:       '40px',
+                height:         '40px',
+                animation:      speech.isListening ? 'glowPulse 1.5s ease-in-out infinite' : 'none',
+                boxShadow:      speech.isListening ? '0 0 10px rgba(0,212,255,0.35)' : 'none',
+                transition:     'all 200ms ease',
+                flexShrink:     0,
+              }}
+              onMouseEnter={(e) => {
+                if (!speech.isListening) {
+                  e.currentTarget.style.color       = '#00d4ff';
+                  e.currentTarget.style.borderColor = 'rgba(0,212,255,0.5)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!speech.isListening) {
+                  e.currentTarget.style.color       = 'rgba(0,212,255,0.45)';
+                  e.currentTarget.style.borderColor = 'rgba(0,212,255,0.2)';
+                }
+              }}
+            >
+              <Mic size={15} aria-hidden="true" />
+            </button>
+          )}
+
+          {/* Text input */}
+          <input
+            ref={inputRef}
+            type="text"
+            placeholder={
+              speech.isListening  ? 'Listening — speak now…'    :
+              pendingEmailContext  ? 'Enter email address…'       :
+                                    'Ask JARVIS anything…'
+            }
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            disabled={loading}
+            style={{
+              flex:          1,
+              background:    'var(--color-bg-raised)',
+              border:        speech.isListening
+                ? '1px solid rgba(0,212,255,0.4)'
+                : '1px solid rgba(0,212,255,0.15)',
+              borderRadius:  '4px',
+              padding:       '0 12px',
+              height:        '40px',
+              color:         'var(--color-text-primary)',
+              fontFamily:    "'Rajdhani', sans-serif",
+              fontSize:      '14px',
+              letterSpacing: '0.02em',
+              outline:       'none',
+              caretColor:    '#00d4ff',
+              transition:    'border-color 200ms, box-shadow 200ms',
+              opacity:       loading ? 0.5 : 1,
+              boxShadow:     speech.isListening
+                ? '0 0 0 3px rgba(0,212,255,0.1)'
+                : 'none',
+            }}
+            onFocus={(e) => {
+              if (!speech.isListening) {
+                e.target.style.borderColor = 'rgba(0,212,255,0.4)';
+                e.target.style.boxShadow   = '0 0 0 3px rgba(0,212,255,0.08)';
+              }
+            }}
+            onBlur={(e) => {
+              if (!speech.isListening) {
+                e.target.style.borderColor = 'rgba(0,212,255,0.15)';
+                e.target.style.boxShadow   = 'none';
+              }
+            }}
+          />
+
+          {/* Send button */}
+          <button
+            type="submit"
+            disabled={loading || !input.trim()}
+            aria-label="Send message"
+            style={{
+              background:     'transparent',
+              border:         '1px solid rgba(0,212,255,0.5)',
+              borderRadius:   '4px',
+              padding:        '0 14px',
+              height:         '40px',
+              color:          '#00d4ff',
+              cursor:         loading || !input.trim() ? 'not-allowed' : 'pointer',
+              display:        'flex',
+              alignItems:     'center',
+              justifyContent: 'center',
+              minWidth:       '44px',
+              opacity:        loading || !input.trim() ? 0.3 : 1,
+              transition:     'all 200ms ease',
+              flexShrink:     0,
+              fontFamily:     "'Rajdhani', sans-serif",
+              fontSize:       '11px',
+              fontWeight:     600,
+              letterSpacing:  '0.12em',
+              gap:            '6px',
+            }}
+            onMouseEnter={(e) => {
+              if (!loading && input.trim()) {
+                e.currentTarget.style.boxShadow = '0 0 12px rgba(0,212,255,0.4)';
+                e.currentTarget.style.background = 'rgba(0,212,255,0.08)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.boxShadow = 'none';
+              e.currentTarget.style.background = 'transparent';
+            }}
+          >
+            <Send size={14} aria-hidden="true" />
+            <span style={{ display: 'none' }} className="send-label">SEND</span>
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
