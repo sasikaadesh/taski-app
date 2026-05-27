@@ -1,13 +1,16 @@
 // gmail.js — Gmail API helper for the Taski chatbot.
 //
 // PRIVACY & SECURITY:
-//   • Only requests gmail.readonly scope — never write or send permissions.
+//   • Requests gmail.readonly (reading) and gmail.send (sending) scopes.
 //   • Email content is never stored in localStorage.
-//   • Email data is only passed to the Claude API for answering the user's question.
+//   • Email data is only passed to the Claude API for answering/drafting.
+//   • Email is NEVER sent without explicit user confirmation via UI button click.
 //
 // SETUP REQUIRED:
 //   You must enable the Gmail API in Google Cloud Console before this will work:
 //   https://console.cloud.google.com/apis/library/gmail.googleapis.com
+//   The gmail.send scope should already be covered since the Gmail API was
+//   enabled earlier — verify it appears in your OAuth consent screen scopes.
 //   Add the same OAuth 2.0 Client ID you use for Google Calendar.
 
 import { getGoogleAccessToken, clearToken } from './googleCalendar';
@@ -117,6 +120,59 @@ export async function searchEmails(query) {
   );
 
   return results.filter(Boolean);
+}
+
+/**
+ * Send an email via the Gmail API using the user's Google account.
+ *
+ * // Email is never sent without explicit user confirmation via UI button click.
+ *
+ * @param {Object} emailData
+ * @param {string} emailData.to      — Recipient email address (validated before calling)
+ * @param {string} emailData.subject — Email subject line
+ * @param {string} emailData.body    — Plain-text email body
+ * @param {string} [emailData.cc]    — Optional CC address
+ * @returns {Promise<{id: string, threadId: string}>} — Gmail message object from API
+ *
+ * Throws typed error strings:
+ *   'GMAIL_INVALID_EMAIL'  — `to` address fails basic RFC format check
+ *   'GMAIL_SCOPE_MISSING'  — the send scope was not granted
+ *   'GMAIL_AUTH_CANCELLED' — user closed the auth popup
+ *   'GMAIL_RATE_LIMIT'     — 429 from Gmail
+ *   'GMAIL_ERROR:<status>' — other HTTP error
+ */
+export async function sendEmail({ to, subject, body, cc }) {
+  // Validate the recipient address before touching the API
+  const EMAIL_RE = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
+  if (!EMAIL_RE.test(to.trim())) {
+    throw new Error('GMAIL_INVALID_EMAIL');
+  }
+
+  // Build an RFC 2822 message.  CRLF line endings are required by the spec.
+  const lines = [];
+  lines.push(`To: ${to.trim()}`);
+  if (cc?.trim()) lines.push(`Cc: ${cc.trim()}`);
+  lines.push(`Subject: ${subject}`);
+  lines.push('MIME-Version: 1.0');
+  lines.push('Content-Type: text/plain; charset=UTF-8');
+  lines.push('');          // blank line separates headers from body
+  lines.push(body);
+  const rawMessage = lines.join('\r\n');
+
+  // Base64url encode (RFC 4648 §5) — Gmail API requires this exact encoding.
+  // btoa() only handles Latin-1; encodeURIComponent → unescape expands UTF-8.
+  const encoded = btoa(unescape(encodeURIComponent(rawMessage)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g,  '');
+
+  const sendRes = await gmailFetch(`${GMAIL_BASE}/messages/send`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ raw: encoded }),
+  });
+
+  return sendRes.json(); // { id, threadId, labelIds }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

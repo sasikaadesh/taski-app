@@ -1,15 +1,17 @@
 // ChatBot — floating chat bubble that expands into a conversational panel powered by Claude.
+// Supports: calendar queries, Gmail reading, and composing / sending emails with user confirmation.
 
 import { useState, useRef, useEffect } from 'react';
 import { MessageCircle, X, Send, Loader2 } from 'lucide-react';
-import { callClaude, CHATBOT_SYSTEM } from '../lib/claude';
+import { callClaude, CHATBOT_SYSTEM, EMAIL_DRAFT_SYSTEM } from '../lib/claude';
 import {
   getCalendarEventsForRange,
   buildCalendarContext,
   clearToken,
   getGoogleAccessToken,
 } from '../lib/googleCalendar';
-import { searchEmails, formatEmailsForPrompt } from '../lib/gmail';
+import { searchEmails, formatEmailsForPrompt, sendEmail } from '../lib/gmail';
+import EmailConfirmationCard from './EmailConfirmationCard';
 
 const MAX_MESSAGES = 10;
 
@@ -36,25 +38,47 @@ function hasCalendarIntent(text) {
   return CALENDAR_KEYWORDS.some((kw) => lower.includes(kw));
 }
 
-// ── Email-intent detection ────────────────────────────────────────────────────
+// ── Email SEND intent detection ───────────────────────────────────────────────
+// These patterns specifically detect "compose/send/forward" intent vs. reading.
 
-const EMAIL_KEYWORDS = [
+const EMAIL_SEND_PATTERNS = [
+  /\bsend\s+(?:an?\s+)?(?:email|e-mail|mail|message)\b/i,
+  /\bwrite\s+(?:an?\s+)?(?:email|e-mail|mail|message)\b/i,
+  /\bcompose\s+(?:an?\s+)?(?:email|e-mail|mail|message)\b/i,
+  /\bdraft\s+(?:an?\s+)?(?:email|e-mail|mail|message)\b/i,
+  /\bshoot\s+(?:an?\s+)?(?:email|e-mail|mail|message)\b/i,
+  // "forward this/it/the email to..."
+  /\bforward\s+(?:this|that|it|the\s+email|the\s+message)?\s*to\s+\w/i,
+  // "reply to James" / "reply to james@..."
+  /\breply\s+to\s+[A-Za-z0-9@]/i,
+  // "email john@company.com that..." — email used as a verb with address
+  /\bemail\s+[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/i,
+  // "email James about..." / "email him about..." — email as verb with recipient + intent
+  /\bemail\s+\w+\s+(?:about|that|saying|regarding|to\s+(?:tell|let|say|inform|ask))\b/i,
+];
+
+function hasEmailSendIntent(text) {
+  return EMAIL_SEND_PATTERNS.some((re) => re.test(text));
+}
+
+// ── Email READ intent detection ───────────────────────────────────────────────
+// Only used when send intent is NOT detected first.
+
+const EMAIL_READ_KEYWORDS = [
   'email', 'emails', 'gmail', 'inbox', 'mail', 'mails',
   'message', 'messages', 'sent', 'received', 'unread',
   'subject', 'attachment',
 ];
-
-// "from" is only an email signal when it follows an email-like phrase
 const FROM_CONTEXT_RE = /\bfrom\s+(?!(?:today|yesterday|tomorrow|this|next|my\s+calendar|the\s+app))/i;
 
-function hasEmailIntent(text) {
+function hasEmailReadIntent(text) {
   const lower = text.toLowerCase();
-  if (EMAIL_KEYWORDS.some((kw) => lower.includes(kw))) return true;
+  if (EMAIL_READ_KEYWORDS.some((kw) => lower.includes(kw))) return true;
   if (FROM_CONTEXT_RE.test(text)) return true;
   return false;
 }
 
-// ── Date range helpers (shared by both calendar and email query building) ─────
+// ── Date range helpers ────────────────────────────────────────────────────────
 
 function parseSpecificDate(text) {
   const lower = text.toLowerCase();
@@ -102,19 +126,16 @@ function detectDateRange(text) {
     nextSun.setDate(nextMon.getDate() + 6);
     return { start: nextMon, end: nextSun };
   }
-
   if (lower.includes('this week') || lower.includes('week')) {
     const end = new Date(today);
     end.setDate(today.getDate() + 6);
     return { start: today, end };
   }
-
   if (lower.includes('tomorrow')) {
     const tomorrow = new Date(today);
     tomorrow.setDate(today.getDate() + 1);
     return { start: tomorrow, end: tomorrow };
   }
-
   if (lower.includes('yesterday')) {
     const yesterday = new Date(today);
     yesterday.setDate(today.getDate() - 1);
@@ -142,53 +163,31 @@ function detectDateRange(text) {
 
 // ── Gmail query builder ───────────────────────────────────────────────────────
 
-/**
- * Build a smart Gmail search query from the user's natural-language message.
- *
- * Examples:
- *   "emails from James"              → "from:James"
- *   "emails from james@gmail.com"    → "from:james@gmail.com"
- *   "emails about the project meeting" → "subject:project meeting"
- *   "emails on May 25th"             → "after:2026/05/25 before:2026/05/26"
- *   "unread emails from my boss"     → "from:boss is:unread"
- *   "emails from James on May 25th"  → "from:James after:2026/05/25 before:2026/05/26"
- */
 function buildGmailQuery(text) {
   const lower = text.toLowerCase();
   const parts = [];
 
-  // 1. Email address → from:addr
   const emailAddrMatch = text.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
   if (emailAddrMatch) {
     parts.push(`from:${emailAddrMatch[0]}`);
   } else {
-    // Name after "from" — exclude time/pronoun words to avoid "from today", "from my calendar"
     const FROM_EXCLUDE = /^(today|yesterday|tomorrow|this|next|my|the|your|their|our|what|where|when|how|any|an|a)\b/i;
     const fromMatch = lower.match(/\bfrom\s+([\w.''\-]+(?:\s+[\w.''\-]+)?)/);
     if (fromMatch) {
       const candidate = fromMatch[1].trim();
-      if (
-        !FROM_EXCLUDE.test(candidate) &&
-        !['inbox', 'gmail', 'email', 'mail', 'me', 'us'].includes(candidate)
-      ) {
+      if (!FROM_EXCLUDE.test(candidate) && !['inbox','gmail','email','mail','me','us'].includes(candidate)) {
         parts.push(`from:${candidate}`);
       }
     }
   }
 
-  // 2. Subject — text after "about" or "subject:" (skip if already have a from)
-  const aboutMatch = lower.match(/\babout\s+(?:the\s+)?([a-z][a-z\s]{2,30}?)(?=\s+(?:from|on|today|yesterday|tomorrow|at\s+\d)|$)/);
+  const aboutMatch   = lower.match(/\babout\s+(?:the\s+)?([a-z][a-z\s]{2,30}?)(?=\s+(?:from|on|today|yesterday|tomorrow|at\s+\d)|$)/);
   const subjectMatch = lower.match(/\bsubject[:\s]+([a-z][a-z\s]{2,30}?)(?=\s+(?:from|on|at\s+\d)|$)/);
-  const topicWords = (aboutMatch?.[1] || subjectMatch?.[1] || '').trim();
-  if (topicWords) {
-    // Use as keyword search rather than subject: so it also matches body snippets
-    parts.push(topicWords);
-  }
+  const topicWords   = (aboutMatch?.[1] || subjectMatch?.[1] || '').trim();
+  if (topicWords) parts.push(topicWords);
 
-  // 3. Unread filter
   if (lower.includes('unread')) parts.push('is:unread');
 
-  // 4. Date filters — only when the text mentions a specific time/date
   const DATE_HINTS = ['today','yesterday','tomorrow','this week','next week'];
   const hasDateHint =
     DATE_HINTS.some((d) => lower.includes(d)) ||
@@ -206,7 +205,6 @@ function buildGmailQuery(text) {
     parts.push(`before:${fmt(dayAfter)}`);
   }
 
-  // 5. Fallback — search inbox with any meaningful content words
   if (parts.length === 0) {
     const stopWords = new Set([
       'can','you','check','if','any','do','i','have','is','are','the','a',
@@ -214,37 +212,185 @@ function buildGmailQuery(text) {
       'some','their','from','about','at','on','for','of','to','and','or',
       'emails','email','gmail','inbox','messages','message','mail',
     ]);
-    const keywords = text
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, ' ')
-      .split(/\s+/)
-      .filter((w) => w.length > 2 && !stopWords.has(w))
-      .slice(0, 4)
-      .join(' ');
+    const keywords = text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
+      .filter((w) => w.length > 2 && !stopWords.has(w)).slice(0, 4).join(' ');
     parts.push(keywords || 'in:inbox');
   }
 
   return parts.join(' ');
 }
 
+// ── Email send helpers ────────────────────────────────────────────────────────
+
+/** Extract a bare email address from free text, or null. */
+function extractEmailAddress(text) {
+  const m = text.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
+  return m ? m[0] : null;
+}
+
+/** Extract a human name (likely recipient) from common send-intent phrases. */
+function extractRecipientName(text) {
+  const SKIP = new Set(['him','her','them','it','me','us','an','a','the','everyone','all']);
+  const patterns = [
+    /\bsend\s+([A-Z]\w+(?:\s+[A-Z]\w+)?)\s+an?\s+(?:email|message)\b/i,
+    /\bsend\s+an?\s+(?:email|message)\s+to\s+([A-Z]\w+(?:\s+[A-Z]\w+)?)\b/i,
+    /\bwrite\s+an?\s+(?:email|message)\s+to\s+([A-Z]\w+(?:\s+[A-Z]\w+)?)\b/i,
+    /\bcompose\s+an?\s+(?:email|message)\s+to\s+([A-Z]\w+(?:\s+[A-Z]\w+)?)\b/i,
+    /\bdraft\s+an?\s+(?:email|message)\s+to\s+([A-Z]\w+(?:\s+[A-Z]\w+)?)\b/i,
+    /\bemail\s+([A-Z]\w+(?:\s+[A-Z]\w+)?)\s+(?:about|that|saying|regarding|to)\b/i,
+    /\breply\s+to\s+([A-Z]\w+(?:\s+[A-Z]\w+)?)\b/i,
+    /\bforward\s+(?:this\s+)?to\s+([A-Z]\w+(?:\s+[A-Z]\w+)?)\b/i,
+    /\bshoot\s+([A-Z]\w+(?:\s+[A-Z]\w+)?)\s+an?\s+(?:email|message)\b/i,
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m?.[1]) {
+      const name = m[1].trim();
+      if (!SKIP.has(name.toLowerCase())) return name;
+    }
+  }
+  return null;
+}
+
+/**
+ * Search Gmail for recent emails from `name` and return the sender's email address.
+ * Returns null if not found or if Gmail search fails.
+ */
+async function findEmailForName(name) {
+  try {
+    const emails = await searchEmails(`from:${name}`);
+    if (emails.length === 0) return null;
+    const fromHeader = emails[0].from;
+    // "James Smith <james@example.com>" or plain "james@example.com"
+    const angleMatch = fromHeader.match(/<([^>]+@[^>]+)>/);
+    const bareMatch  = fromHeader.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
+    return angleMatch?.[1] ?? bareMatch?.[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ask Claude to draft an email and return { subject, body }.
+ * Throws if Claude's response can't be parsed as JSON.
+ */
+async function draftEmailWithClaude(userIntent, recipientEmail, calendarContext = '') {
+  const systemPrompt = [
+    EMAIL_DRAFT_SYSTEM,
+    recipientEmail     ? `\nThe recipient email address is: ${recipientEmail}` : '',
+    calendarContext    ? `\nRelevant calendar context (use to make the email accurate):\n${calendarContext}` : '',
+  ].join('');
+
+  const raw = await callClaude(
+    [{ role: 'user', content: userIntent }],
+    { system: systemPrompt },
+  );
+
+  // Claude may wrap JSON in ```json ... ``` — strip that first
+  const stripped    = raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+  const jsonMatch   = stripped.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('DRAFT_PARSE_FAILED');
+
+  const parsed = JSON.parse(jsonMatch[0]);
+  if (!parsed.subject || !parsed.body) throw new Error('DRAFT_INCOMPLETE');
+
+  return { subject: parsed.subject, body: parsed.body };
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ChatBot() {
-  const [open, setOpen]         = useState(false);
+  const [open, setOpen]       = useState(false);
   const [messages, setMessages] = useState([]);
-  const [input, setInput]       = useState('');
-  const [loading, setLoading]   = useState(false);
-  const [error, setError]       = useState('');
+  const [input, setInput]     = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState('');
+
+  // emailDrafts: { [draftId]: { to, subject, body, cc } }
+  // Keyed separately from messages so edits don't require message-array mutation.
+  const [emailDrafts, setEmailDrafts] = useState({});
+
+  // pendingEmailContext: set when we're waiting for the user to supply an email address.
+  // { recipientName: string|null, originalIntent: string }
+  const [pendingEmailContext, setPendingEmailContext] = useState(null);
+
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, open]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, open]);
+  useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
 
-  useEffect(() => {
-    if (open) inputRef.current?.focus();
-  }, [open]);
+  // ── Email draft state handlers ────────────────────────────────────────────
+
+  function handleEmailDraftChange(draftId, field, value) {
+    setEmailDrafts((prev) => ({
+      ...prev,
+      [draftId]: { ...prev[draftId], [field]: value },
+    }));
+  }
+
+  async function handleEmailSend(draftId) {
+    const draft = emailDrafts[draftId];
+    // Email is never sent without explicit user confirmation via the Send button.
+    // This function is only called when the user clicks Send in EmailConfirmationCard.
+    await sendEmail({ to: draft.to, subject: draft.subject, body: draft.body, cc: draft.cc ?? '' });
+
+    // ── Success: replace the confirmation card with a sent-confirmation message ──
+    const sentTime = new Date().toLocaleTimeString('en-US', { timeStyle: 'short' });
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.meta?.draftId === draftId
+          ? {
+              role:    'assistant',
+              content: `✅ EMAIL SENT\nTo: ${draft.to}\nSubject: ${draft.subject}\nSent at: ${sentTime}`,
+              meta:    { type: 'email-sent', emailData: draft },
+            }
+          : m
+      )
+    );
+    // Clean up draft data
+    setEmailDrafts((prev) => {
+      const next = { ...prev };
+      delete next[draftId];
+      return next;
+    });
+  }
+
+  function handleEmailCancel(draftId) {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.meta?.draftId === draftId
+          ? { role: 'assistant', content: "No problem! Email cancelled.", meta: {} }
+          : m
+      )
+    );
+    setEmailDrafts((prev) => {
+      const next = { ...prev };
+      delete next[draftId];
+      return next;
+    });
+  }
+
+  // ── Internal helper: build draft message & add to chat ───────────────────
+
+  function addEmailDraftToChat(recipientEmail, subject, body) {
+    const draftId = Date.now().toString();
+    setEmailDrafts((prev) => ({
+      ...prev,
+      [draftId]: { to: recipientEmail, subject, body, cc: '' },
+    }));
+    setMessages((prev) => [
+      ...prev,
+      {
+        role:    'assistant',
+        content: `[Email draft to ${recipientEmail} — awaiting your confirmation]`,
+        meta:    { type: 'email-confirm', draftId },
+      },
+    ].slice(-MAX_MESSAGES));
+    return draftId;
+  }
+
+  // ── Main send handler ─────────────────────────────────────────────────────
 
   async function handleSend(e) {
     e.preventDefault();
@@ -258,54 +404,167 @@ export default function ChatBot() {
     setError('');
     setLoading(true);
 
-    try {
-      // ── Timezone + date context — injected into EVERY system prompt ────────
-      // This fixes "Could you let me know what today's date is?" — Claude always
-      // knows the user's local date and time without needing to ask.
-      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const now      = new Date();
-      const todayStr = now.toLocaleDateString('en-US', {
-        timeZone: timezone,
-        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-      });
-      const timeStr = now.toLocaleTimeString('en-US', {
-        timeZone: timezone,
-        timeStyle: 'short',
-      });
-      const dateContext =
-        `Today is ${todayStr}. Current time is ${timeStr}. ` +
-        `User's timezone is ${timezone}.\n` +
-        `Always use this date when the user says "today", "yesterday", "this week", or "this month". ` +
-        `Never ask the user what today's date is.`;
+    // ── Shared date/timezone context ─────────────────────────────────────────
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const now      = new Date();
+    const todayStr = now.toLocaleDateString('en-US', {
+      timeZone: timezone, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    });
+    const timeStr = now.toLocaleTimeString('en-US', { timeZone: timezone, timeStyle: 'short' });
+    const dateContext =
+      `Today is ${todayStr}. Current time is ${timeStr}. ` +
+      `User's timezone is ${timezone}.\n` +
+      `Always use this date when the user says "today", "yesterday", "this week", or "this month". ` +
+      `Never ask the user what today's date is.`;
 
-      // Base system always includes date context regardless of intent
+    // ════════════════════════════════════════════════════════════════════════
+    // BRANCH 1 — Waiting for user to supply an email address
+    // ════════════════════════════════════════════════════════════════════════
+    if (pendingEmailContext) {
+      const emailAddr = extractEmailAddress(text) || text.trim();
+      const VALID_EMAIL = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
+
+      if (VALID_EMAIL.test(emailAddr)) {
+        // Got a valid address — draft the email
+        const { originalIntent } = pendingEmailContext;
+        setPendingEmailContext(null);
+        try {
+          const draft = await draftEmailWithClaude(originalIntent, emailAddr);
+          addEmailDraftToChat(emailAddr, draft.subject, draft.body);
+        } catch {
+          setMessages((prev) => [...prev, {
+            role:    'assistant',
+            content: "I had trouble drafting that email. Could you try again with more details?",
+          }].slice(-MAX_MESSAGES));
+        }
+        setLoading(false);
+        return;
+
+      } else if (!text.includes(' ')) {
+        // Single token — looks like they tried to give an address but it's malformed
+        setMessages((prev) => [...prev, {
+          role:    'assistant',
+          content: "That doesn't look like a valid email address. Can you double check it?",
+        }].slice(-MAX_MESSAGES));
+        setLoading(false);
+        return;
+
+      } else {
+        // Multi-word sentence — user has moved on to a different query; clear context
+        setPendingEmailContext(null);
+        // Fall through to normal intent detection below
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // BRANCH 2 — Email SEND intent
+    // ════════════════════════════════════════════════════════════════════════
+    if (hasEmailSendIntent(text)) {
+      try {
+        let recipientEmail = extractEmailAddress(text);
+
+        // If no email address, try to find it by name via Gmail
+        if (!recipientEmail) {
+          const name = extractRecipientName(text);
+          if (name) {
+            recipientEmail = await findEmailForName(name);
+            if (!recipientEmail) {
+              // Name found but no email — ask the user
+              setMessages((prev) => [...prev, {
+                role:    'assistant',
+                content: `What is ${name}'s email address?`,
+                meta:    { waitingForEmail: true },
+              }].slice(-MAX_MESSAGES));
+              setPendingEmailContext({ recipientName: name, originalIntent: text });
+              setLoading(false);
+              return;
+            }
+          } else {
+            // No recipient at all — ask
+            setMessages((prev) => [...prev, {
+              role:    'assistant',
+              content: "Who would you like to send this to? Please provide their email address.",
+              meta:    { waitingForEmail: true },
+            }].slice(-MAX_MESSAGES));
+            setPendingEmailContext({ recipientName: null, originalIntent: text });
+            setLoading(false);
+            return;
+          }
+        }
+
+        // Optionally fetch calendar context if the message also involves scheduling
+        let calendarContext = '';
+        if (hasCalendarIntent(text)) {
+          try {
+            const { start, end } = detectDateRange(text);
+            const events          = await getCalendarEventsForRange(start, end);
+            calendarContext       = buildCalendarContext(events, start, end);
+          } catch {
+            // Calendar context is optional — ignore errors
+          }
+        }
+
+        // Draft the email with Claude
+        const draft = await draftEmailWithClaude(text, recipientEmail, calendarContext);
+
+        // If calendar context was fetched, also answer the calendar question in a text message
+        if (calendarContext) {
+          const calSystem =
+            `${CHATBOT_SYSTEM}\n\n${dateContext}\n\n` +
+            `Here are the user's actual Google Calendar events:\n${calendarContext}\n\n` +
+            `Briefly answer the calendar/scheduling question embedded in the user's message. ` +
+            `Be concise (1-3 sentences). Do NOT mention the email — that will be shown separately.`;
+          const calReply = await callClaude(
+            next.map(({ role, content }) => ({ role, content })),
+            { system: calSystem },
+          );
+          setMessages((prev) => [
+            ...prev,
+            { role: 'assistant', content: calReply, meta: { checked: 'calendar' } },
+          ].slice(-MAX_MESSAGES));
+        }
+
+        addEmailDraftToChat(recipientEmail, draft.subject, draft.body);
+
+      } catch (err) {
+        if (import.meta.env.DEV) console.warn('[Taski Email Draft]', err);
+        setMessages((prev) => [...prev, {
+          role:    'assistant',
+          content: "I had trouble drafting that email. Please try again with more details about what you'd like to say.",
+        }].slice(-MAX_MESSAGES));
+      }
+
+      setLoading(false);
+      return;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // BRANCH 3 — Calendar / Gmail READ / General (existing logic)
+    // ════════════════════════════════════════════════════════════════════════
+    try {
       let system     = `${CHATBOT_SYSTEM}\n\n${dateContext}`;
-      let checkedTag = null; // 'calendar' | 'gmail' | 'both'
+      let checkedTag = null;
 
       const wantsCalendar = hasCalendarIntent(text);
-      const wantsEmail    = hasEmailIntent(text);
+      const wantsEmail    = hasEmailReadIntent(text);
 
-      // ── Fetch context data (parallel when both are needed) ─────────────────
       if (wantsCalendar || wantsEmail) {
-
-        // Build both fetch promises (or null if not needed)
         const calendarPromise = wantsCalendar
           ? (async () => {
               const { start, end } = detectDateRange(text);
-              const events         = await getCalendarEventsForRange(start, end);
+              const events          = await getCalendarEventsForRange(start, end);
               return buildCalendarContext(events, start, end);
             })()
           : Promise.resolve(null);
 
         const emailPromise = wantsEmail
           ? (async () => {
-              const query = buildGmailQuery(text);
+              const query  = buildGmailQuery(text);
               const emails = await searchEmails(query);
               return { block: formatEmailsForPrompt(emails, query), query };
             })()
           : Promise.resolve(null);
 
-        // Run both in parallel; handle each error independently
         const [calendarResult, emailResult] = await Promise.allSettled([
           calendarPromise,
           emailPromise,
@@ -314,113 +573,92 @@ export default function ChatBot() {
         let calendarBlock = null;
         let emailBlock    = null;
 
-        // ── Calendar result handling ────────────────────────────────────────
+        // ── Calendar result ───────────────────────────────────────────────
         if (wantsCalendar) {
           if (calendarResult.status === 'fulfilled') {
             calendarBlock = calendarResult.value;
           } else {
             const msg = calendarResult.reason?.message ?? 'Unknown error';
-            const notConnected = {
+            setMessages((prev) => [...prev, {
               role:    'assistant',
               content: msg.toLowerCase().includes('cancel')
                 ? "I need access to your Google Calendar to answer that. Please try again and complete the sign-in when prompted."
                 : `I couldn't load your calendar right now (${msg}). Please try again in a moment.`,
               meta: { checked: null },
-            };
-            setMessages((prev) => [...prev, notConnected].slice(-MAX_MESSAGES));
+            }].slice(-MAX_MESSAGES));
             setLoading(false);
             return;
           }
         }
 
-        // ── Email result handling ───────────────────────────────────────────
+        // ── Email result ──────────────────────────────────────────────────
         if (wantsEmail) {
           if (emailResult.status === 'fulfilled') {
             emailBlock = emailResult.value?.block ?? null;
           } else {
-            const err = emailResult.reason;
-            const errMsg = err?.message ?? '';
-
+            const errMsg = emailResult.reason?.message ?? '';
             if (errMsg === 'GMAIL_AUTH_CANCELLED') {
-              // Show inline reconnect prompt without aborting the whole response;
-              // if calendar data is available, we can still answer that part.
-              const reconnectMsg = {
+              setMessages((prev) => [...prev, {
                 role:    'assistant',
                 content: "To search your Gmail I need Google account access. Please try again and complete the sign-in when prompted.",
                 meta:    { reconnectGmail: true },
-              };
-              setMessages((prev) => [...prev, reconnectMsg].slice(-MAX_MESSAGES));
+              }].slice(-MAX_MESSAGES));
               if (!wantsCalendar) { setLoading(false); return; }
-              // Fall through to answer the calendar part
             } else if (errMsg === 'GMAIL_SCOPE_MISSING') {
-              const reconnectMsg = {
+              setMessages((prev) => [...prev, {
                 role:    'assistant',
                 content: "Gmail access isn't enabled for this session yet.",
                 meta:    { reconnectGmail: true },
-              };
-              setMessages((prev) => [...prev, reconnectMsg].slice(-MAX_MESSAGES));
+              }].slice(-MAX_MESSAGES));
               if (!wantsCalendar) { setLoading(false); return; }
             } else if (errMsg === 'GMAIL_RATE_LIMIT') {
-              const rateLimitMsg = {
+              setMessages((prev) => [...prev, {
                 role:    'assistant',
                 content: "Gmail is receiving too many requests right now — please try again in a moment.",
-                meta:    { checked: null },
-              };
-              setMessages((prev) => [...prev, rateLimitMsg].slice(-MAX_MESSAGES));
+              }].slice(-MAX_MESSAGES));
               if (!wantsCalendar) { setLoading(false); return; }
             } else {
-              // Generic Gmail error — log in dev, fall through gracefully
-              if (import.meta.env.DEV) {
-                console.warn('[Taski Gmail]', errMsg);
-              }
+              if (import.meta.env.DEV) console.warn('[Taski Gmail]', errMsg);
             }
           }
         }
 
-        // ── Build the combined system prompt ────────────────────────────────
-        const hasCalData = calendarBlock !== null;
-        const hasEmailData = emailBlock !== null;
+        // ── Build combined system prompt ──────────────────────────────────
+        const hasCalData   = calendarBlock !== null;
+        const hasEmailData = emailBlock    !== null;
 
         if (hasCalData && hasEmailData) {
           checkedTag = 'both';
-          // `system` already has CHATBOT_SYSTEM + dateContext; append data blocks
           system +=
             `\n\nGOOGLE CALENDAR EVENTS:\n${calendarBlock}\n\n` +
             `GMAIL RESULTS:\n${emailBlock}\n\n` +
-            `Use the calendar events and email results above to answer the user's question naturally. ` +
+            `Use both data sources above to answer the user's question naturally. ` +
             `All email times are already in the user's local timezone (${timezone}). ` +
             `Be concise and conversational. Never make up events or emails not in the data.`;
         } else if (hasCalData) {
           checkedTag = 'calendar';
           system +=
-            `\n\nHere are the user's actual Google Calendar events:\n` +
-            `${calendarBlock}\n\n` +
-            `Use this real calendar data to answer their scheduling question accurately. ` +
-            `Be concise and conversational.`;
+            `\n\nHere are the user's actual Google Calendar events:\n${calendarBlock}\n\n` +
+            `Use this real calendar data to answer their scheduling question accurately. Be concise and conversational.`;
         } else if (hasEmailData) {
           checkedTag = 'gmail';
           system +=
-            `\n\nThe user asked about their emails. ` +
-            `Here are the matching emails found in their Gmail:\n\n` +
+            `\n\nThe user asked about their emails. Here are the matching emails found in their Gmail:\n\n` +
             `${emailBlock}\n\n` +
-            `Each email shows: sender, subject, date (already converted to the user's local ` +
-            `timezone ${timezone}), and a preview. ` +
-            `Answer the user's question naturally based on these results. ` +
-            `If no emails were found, say so clearly. ` +
+            `Each email shows: sender, subject, date (already in user's local timezone ${timezone}), and a preview. ` +
+            `Answer naturally based on these results. If no emails were found, say so clearly. ` +
             `Never make up emails that are not in the results.`;
         }
       }
 
-      // Strip any UI-only fields (e.g. `meta`) before sending to the Claude API.
-      // The API only accepts { role, content } — extra keys cause a validation error.
       const apiMessages  = next.map(({ role, content }) => ({ role, content }));
       const reply        = await callClaude(apiMessages, { system });
-      const assistantMsg = {
+      setMessages((prev) => [...prev, {
         role:    'assistant',
         content: reply,
         meta:    { checked: checkedTag },
-      };
-      setMessages((prev) => [...prev, assistantMsg].slice(-MAX_MESSAGES));
+      }].slice(-MAX_MESSAGES));
+
     } catch (err) {
       setError(err.message);
     } finally {
@@ -428,23 +666,22 @@ export default function ChatBot() {
     }
   }
 
-  // ── Reconnect handler — triggers a fresh OAuth popup ─────────────────────
+  // ── Reconnect Google handler ──────────────────────────────────────────────
   async function handleReconnectGoogle() {
     clearToken();
     try {
       await getGoogleAccessToken();
-      const successMsg = {
+      setMessages((prev) => [...prev, {
         role:    'assistant',
-        content: "Google account reconnected! You can now ask about emails or calendar events.",
+        content: "Google account reconnected! You can now ask about emails, calendar, or send emails.",
         meta:    { checked: null },
-      };
-      setMessages((prev) => [...prev, successMsg].slice(-MAX_MESSAGES));
+      }].slice(-MAX_MESSAGES));
     } catch {
       // User cancelled — nothing to do
     }
   }
 
-  // ── Source tag renderer (Tron badge style) ────────────────────────────────
+  // ── Source-tag badge ──────────────────────────────────────────────────────
   function SourceTag({ checked }) {
     if (!checked) return null;
     const label =
@@ -455,17 +692,17 @@ export default function ChatBot() {
     return (
       <span
         style={{
-          display:      'inline-block',
-          fontFamily:   "'Rajdhani', sans-serif",
-          fontSize:     '10px',
-          fontWeight:   500,
+          display:       'inline-block',
+          fontFamily:    "'Rajdhani', sans-serif",
+          fontSize:      '10px',
+          fontWeight:    500,
           letterSpacing: '0.08em',
-          padding:      '2px 8px',
-          borderRadius: '100px',
-          marginBottom: '4px',
-          background:   'var(--color-neon-cyan-glow)',
-          border:       '1px solid var(--color-neon-cyan-border)',
-          color:        'var(--color-neon-cyan)',
+          padding:       '2px 8px',
+          borderRadius:  '100px',
+          marginBottom:  '4px',
+          background:    'var(--color-neon-cyan-glow)',
+          border:        '1px solid var(--color-neon-cyan-border)',
+          color:         'var(--color-neon-cyan)',
         }}
       >
         {label}
@@ -473,6 +710,7 @@ export default function ChatBot() {
     );
   }
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
       {/* ── Chat panel ── */}
@@ -488,7 +726,7 @@ export default function ChatBot() {
             boxShadow:    '0 0 40px rgba(0,0,0,0.8), 0 0 20px rgba(0,212,255,0.1)',
           }}
         >
-          {/* ── Panel header ── */}
+          {/* ── Header ── */}
           <div
             className="flex items-center justify-between px-4 py-3 flex-shrink-0"
             style={{
@@ -498,19 +736,15 @@ export default function ChatBot() {
             }}
           >
             <div className="flex items-center gap-2">
-              <MessageCircle
-                size={16}
-                style={{ color: 'var(--color-neon-cyan)' }}
-                aria-hidden="true"
-              />
+              <MessageCircle size={16} style={{ color: 'var(--color-neon-cyan)' }} aria-hidden="true" />
               <span
                 style={{
-                  fontFamily:   "'Orbitron', sans-serif",
-                  fontSize:     '13px',
-                  fontWeight:   700,
+                  fontFamily:    "'Orbitron', sans-serif",
+                  fontSize:      '13px',
+                  fontWeight:    700,
                   letterSpacing: '0.08em',
-                  color:        'var(--color-neon-cyan)',
-                  textShadow:   '0 0 12px rgba(0,212,255,0.6)',
+                  color:         'var(--color-neon-cyan)',
+                  textShadow:    '0 0 12px rgba(0,212,255,0.6)',
                 }}
               >
                 TASKI AI
@@ -519,14 +753,7 @@ export default function ChatBot() {
             <button
               onClick={() => setOpen(false)}
               aria-label="Close chat"
-              style={{
-                color:      'var(--color-text-dim)',
-                background: 'none',
-                border:     'none',
-                cursor:     'pointer',
-                padding:    '4px',
-                transition: 'color 150ms',
-              }}
+              style={{ color: 'var(--color-text-dim)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', transition: 'color 150ms' }}
               onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-neon-cyan)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-dim)'; }}
             >
@@ -535,23 +762,22 @@ export default function ChatBot() {
           </div>
 
           {/* ── Messages ── */}
-          <div
-            className="flex-1 overflow-y-auto p-4 flex flex-col gap-3"
-          >
+          <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-3">
             {messages.length === 0 && (
               <p
                 style={{
-                  fontFamily:   "'Rajdhani', sans-serif",
-                  fontSize:     '13px',
+                  fontFamily:    "'Rajdhani', sans-serif",
+                  fontSize:      '13px',
                   letterSpacing: '0.04em',
-                  color:        'var(--color-text-secondary)',
-                  textAlign:    'center',
-                  marginTop:    '32px',
-                  lineHeight:   1.6,
+                  color:         'var(--color-text-secondary)',
+                  textAlign:     'center',
+                  marginTop:     '32px',
+                  lineHeight:    1.6,
                 }}
               >
                 Hi! I'm Taski AI.<br />
-                Ask me about tasks, schedule, or emails.
+                Ask me about tasks, schedule, emails,<br />
+                or ask me to send an email for you.
               </p>
             )}
 
@@ -564,36 +790,70 @@ export default function ChatBot() {
                   /* ── User bubble ── */
                   <div
                     style={{
-                      maxWidth:     '82%',
-                      padding:      '8px 12px',
-                      borderRadius: '4px',
-                      fontFamily:   "'Rajdhani', sans-serif",
-                      fontSize:     '14px',
+                      maxWidth:      '82%',
+                      padding:       '8px 12px',
+                      borderRadius:  '4px',
+                      fontFamily:    "'Rajdhani', sans-serif",
+                      fontSize:      '14px',
                       letterSpacing: '0.02em',
-                      lineHeight:   1.5,
-                      background:   'rgba(0,212,255,0.08)',
-                      border:       '1px solid var(--color-neon-cyan-border)',
-                      color:        'var(--color-text-primary)',
+                      lineHeight:    1.5,
+                      background:    'rgba(0,212,255,0.08)',
+                      border:        '1px solid var(--color-neon-cyan-border)',
+                      color:         'var(--color-text-primary)',
                     }}
                   >
                     {msg.content}
                   </div>
+
+                ) : msg.meta?.type === 'email-confirm' && emailDrafts[msg.meta.draftId] ? (
+                  /* ── Email confirmation card ── */
+                  <div style={{ width: '100%' }}>
+                    <EmailConfirmationCard
+                      draft={emailDrafts[msg.meta.draftId]}
+                      onChange={(field, value) => handleEmailDraftChange(msg.meta.draftId, field, value)}
+                      onSend={() => handleEmailSend(msg.meta.draftId)}
+                      onCancel={() => handleEmailCancel(msg.meta.draftId)}
+                    />
+                  </div>
+
+                ) : msg.meta?.type === 'email-sent' ? (
+                  /* ── Email sent confirmation ── */
+                  <div
+                    style={{
+                      maxWidth:      '90%',
+                      padding:       '10px 13px',
+                      borderRadius:  '4px',
+                      fontFamily:    "'Rajdhani', sans-serif",
+                      fontSize:      '13px',
+                      letterSpacing: '0.02em',
+                      lineHeight:    1.6,
+                      whiteSpace:    'pre-line',
+                      background:    'rgba(0,255,136,0.06)',
+                      border:        '1px solid rgba(0,255,136,0.3)',
+                      color:         'var(--color-success)',
+                      boxShadow:     '0 0 16px rgba(0,255,136,0.12)',
+                    }}
+                  >
+                    {msg.content}
+                  </div>
+
                 ) : (
-                  /* ── Assistant bubble ── */
+                  /* ── Normal assistant bubble ── */
                   <div style={{ maxWidth: '82%', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '3px' }}>
                     <SourceTag checked={msg.meta?.checked} />
                     <div
                       style={{
-                        padding:      '8px 12px',
-                        borderRadius: '4px',
-                        fontFamily:   "'Rajdhani', sans-serif",
-                        fontSize:     '14px',
+                        padding:       '8px 12px',
+                        borderRadius:  '4px',
+                        fontFamily:    "'Rajdhani', sans-serif",
+                        fontSize:      '14px',
                         letterSpacing: '0.02em',
-                        lineHeight:   1.5,
-                        background:   'var(--color-bg-raised)',
-                        border:       '1px solid var(--color-border)',
-                        color:        'var(--color-text-primary)',
-                        width:        '100%',
+                        lineHeight:    1.5,
+                        background:    'var(--color-bg-raised)',
+                        border:        '1px solid var(--color-border)',
+                        color:         'var(--color-text-primary)',
+                        whiteSpace:    'pre-line',
+                        width:         '100%',
                       }}
                     >
                       {msg.content}
@@ -603,24 +863,24 @@ export default function ChatBot() {
                         <button
                           onClick={handleReconnectGoogle}
                           style={{
-                            display:      'block',
-                            marginTop:    '8px',
-                            fontFamily:   "'Rajdhani', sans-serif",
-                            fontSize:     '12px',
-                            letterSpacing: '0.04em',
-                            color:        'var(--color-neon-cyan)',
-                            background:   'none',
-                            border:       'none',
-                            cursor:       'pointer',
-                            padding:      0,
-                            textDecoration: 'underline',
+                            display:             'block',
+                            marginTop:           '8px',
+                            fontFamily:          "'Rajdhani', sans-serif",
+                            fontSize:            '12px',
+                            letterSpacing:       '0.04em',
+                            color:               'var(--color-neon-cyan)',
+                            background:          'none',
+                            border:              'none',
+                            cursor:              'pointer',
+                            padding:             0,
+                            textDecoration:      'underline',
                             textUnderlineOffset: '3px',
-                            transition:   'opacity 150ms',
+                            transition:          'opacity 150ms',
                           }}
                           onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.7'; }}
                           onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
                         >
-                          Reconnect Google to enable Gmail access →
+                          Reconnect Google →
                         </button>
                       )}
                     </div>
@@ -634,28 +894,23 @@ export default function ChatBot() {
               <div className="flex justify-start">
                 <div
                   style={{
-                    padding:      '8px 12px',
+                    padding:     '8px 12px',
                     borderRadius: '4px',
-                    background:   'var(--color-bg-raised)',
-                    border:       '1px solid var(--color-border)',
-                    display:      'flex',
-                    alignItems:   'center',
-                    gap:          '8px',
+                    background:  'var(--color-bg-raised)',
+                    border:      '1px solid var(--color-border)',
+                    display:     'flex',
+                    alignItems:  'center',
+                    gap:         '8px',
                   }}
                 >
-                  <Loader2
-                    size={13}
-                    className="animate-spin"
-                    style={{ color: 'var(--color-neon-cyan)' }}
-                    aria-hidden="true"
-                  />
+                  <Loader2 size={13} className="animate-spin" style={{ color: 'var(--color-neon-cyan)' }} aria-hidden="true" />
                   <span
                     style={{
-                      fontFamily:   "'Rajdhani', sans-serif",
-                      fontSize:     '12px',
+                      fontFamily:    "'Rajdhani', sans-serif",
+                      fontSize:      '12px',
                       letterSpacing: '0.06em',
                       textTransform: 'uppercase',
-                      color:        'var(--color-text-secondary)',
+                      color:         'var(--color-text-secondary)',
                     }}
                   >
                     Processing…
@@ -667,12 +922,12 @@ export default function ChatBot() {
             {error && (
               <p
                 style={{
-                  fontFamily:   "'Rajdhani', sans-serif",
-                  fontSize:     '12px',
+                  fontFamily:    "'Rajdhani', sans-serif",
+                  fontSize:      '12px',
                   letterSpacing: '0.04em',
-                  color:        'var(--color-danger)',
-                  textAlign:    'center',
-                  padding:      '0 8px',
+                  color:         'var(--color-danger)',
+                  textAlign:     'center',
+                  padding:       '0 8px',
                 }}
               >
                 {error}
@@ -690,24 +945,28 @@ export default function ChatBot() {
             <input
               ref={inputRef}
               type="text"
-              placeholder="Ask about tasks, schedule, or emails…"
+              placeholder={
+                pendingEmailContext
+                  ? "Enter email address…"
+                  : "Ask about tasks, schedule, emails…"
+              }
               value={input}
               onChange={(e) => setInput(e.target.value)}
               disabled={loading}
               style={{
-                flex:         1,
-                background:   'var(--color-bg-raised)',
-                border:       '1px solid var(--color-border)',
-                borderRadius: '4px',
-                padding:      '8px 12px',
-                color:        'var(--color-text-primary)',
-                fontFamily:   "'Rajdhani', sans-serif",
-                fontSize:     '14px',
+                flex:          1,
+                background:    'var(--color-bg-raised)',
+                border:        '1px solid var(--color-border)',
+                borderRadius:  '4px',
+                padding:       '8px 12px',
+                color:         'var(--color-text-primary)',
+                fontFamily:    "'Rajdhani', sans-serif",
+                fontSize:      '14px',
                 letterSpacing: '0.02em',
-                outline:      'none',
-                caretColor:   'var(--color-neon-cyan)',
-                transition:   'border-color 250ms, box-shadow 250ms',
-                opacity:      loading ? 0.5 : 1,
+                outline:       'none',
+                caretColor:    'var(--color-neon-cyan)',
+                transition:    'border-color 250ms, box-shadow 250ms',
+                opacity:       loading ? 0.5 : 1,
               }}
               onFocus={(e) => {
                 e.target.style.borderColor = 'var(--color-border-bright)';
@@ -718,7 +977,6 @@ export default function ChatBot() {
                 e.target.style.boxShadow   = 'none';
               }}
             />
-            {/* Send — outlined icon button */}
             <button
               type="submit"
               disabled={loading || !input.trim()}
@@ -757,7 +1015,7 @@ export default function ChatBot() {
         </div>
       )}
 
-      {/* ── Floating bubble — transparent + glowPulse ── */}
+      {/* ── Floating bubble ── */}
       <button
         onClick={() => setOpen((v) => !v)}
         aria-label={open ? 'Close Taski Assistant' : 'Open Taski Assistant'}
@@ -780,20 +1038,17 @@ export default function ChatBot() {
           transition:     'box-shadow 250ms cubic-bezier(0.16,1,0.3,1), transform 150ms',
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.boxShadow  = '0 0 30px rgba(0,212,255,0.8), inset 0 0 20px rgba(0,212,255,0.1)';
-          e.currentTarget.style.animation  = 'none';
+          e.currentTarget.style.boxShadow = '0 0 30px rgba(0,212,255,0.8), inset 0 0 20px rgba(0,212,255,0.1)';
+          e.currentTarget.style.animation = 'none';
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.boxShadow  = '';
+          e.currentTarget.style.boxShadow = '';
           if (!open) e.currentTarget.style.animation = 'glowPulse 2s ease-in-out infinite';
         }}
         onMouseDown={(e) => { e.currentTarget.style.transform = 'scale(0.92)'; }}
         onMouseUp={(e)   => { e.currentTarget.style.transform = 'scale(1)'; }}
       >
-        {open
-          ? <X size={20} aria-hidden="true" />
-          : <MessageCircle size={20} aria-hidden="true" />
-        }
+        {open ? <X size={20} aria-hidden="true" /> : <MessageCircle size={20} aria-hidden="true" />}
       </button>
     </>
   );

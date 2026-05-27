@@ -12,13 +12,19 @@
 
 const CLIENT_ID    = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const REDIRECT_URI = window.location.origin; // e.g. http://localhost:5173
-// Full calendar scope + Gmail readonly.
+// Full calendar scope + Gmail readonly + Gmail send.
 // gmail.readonly is needed for the chatbot Gmail search feature.
+// gmail.send is needed for the chatbot email send feature.
 // NOTE: You must also enable the Gmail API in Google Cloud Console:
 //   https://console.cloud.google.com/apis/library/gmail.googleapis.com
+// The gmail.send scope should already be enabled since you enabled the Gmail
+// API earlier — but confirm it's listed under OAuth consent screen scopes.
+// Users who authenticated before this scope was added must re-authenticate
+// once to grant the new permission (the popup will show the updated consent).
 const SCOPES =
   'https://www.googleapis.com/auth/calendar ' +
-  'https://www.googleapis.com/auth/gmail.readonly';
+  'https://www.googleapis.com/auth/gmail.readonly ' +
+  'https://www.googleapis.com/auth/gmail.send';
 const TOKEN_KEY    = 'taski_goog_token';
 
 // ── Token storage ─────────────────────────────────────────────────────────────
