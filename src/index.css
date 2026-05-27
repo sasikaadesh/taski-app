@@ -61,6 +61,12 @@
   100% { transform: translateY(100%);  opacity: 0; }
 }
 
+/* Recording dot / LISTENING indicator — used by voice input in ChatBot */
+@keyframes recordPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.2; }
+}
+
 /* ── Base reset ───────────────────────────────────────────────────────────── */
 *, *::before, *::after {
   box-sizing: border-box;

@@ -1,9 +1,10 @@
 // ChatBot — floating chat bubble that expands into a conversational panel powered by Claude.
 // Supports: calendar queries, Gmail reading, and composing / sending emails with user confirmation.
 
-import { useState, useRef, useEffect } from 'react';
-import { MessageCircle, X, Send, Loader2 } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { MessageCircle, X, Send, Loader2, Mic } from 'lucide-react';
 import { callClaude, CHATBOT_SYSTEM, EMAIL_DRAFT_SYSTEM } from '../lib/claude';
+import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import {
   getCalendarEventsForRange,
   buildCalendarContext,
@@ -316,6 +317,63 @@ export default function ChatBot() {
 
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
+
+  // ── Voice input ───────────────────────────────────────────────────────────
+  const speech = useSpeechRecognition();
+
+  // Mic toggle — extracted to a ref so the keyboard-shortcut effect never
+  // captures a stale closure (the ref is updated every render).
+  const micToggleRef = useRef(null);
+  micToggleRef.current = useCallback(() => {
+    if (speech.isListening) {
+      speech.stopListening();
+    } else {
+      setInput('');
+      speech.resetTranscript();
+      speech.startListening();
+    }
+  }, [speech]);
+
+  // Sync live transcript → input while (and just after) listening.
+  // Only updates when there's actual speech content so typed text is unaffected.
+  useEffect(() => {
+    if (speech.transcript) setInput(speech.transcript);
+  }, [speech.transcript]);
+
+  // Stop listening when the chat panel is closed.
+  useEffect(() => {
+    if (!open && speech.isListening) speech.stopListening();
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Translate speech errors → friendly assistant messages.
+  useEffect(() => {
+    if (!speech.error) return;
+    const MAP = {
+      PERMISSION_DENIED: "🎤 Microphone access was denied. Please allow microphone access in your browser settings and try again.",
+      NO_SPEECH:         "Didn't catch that — please try again.",
+      NETWORK:           "Voice input requires an internet connection.",
+      UNKNOWN:           "Voice input encountered an error. Please try again.",
+    };
+    setMessages((prev) => [
+      ...prev,
+      { role: 'assistant', content: MAP[speech.error] ?? MAP.UNKNOWN },
+    ].slice(-MAX_MESSAGES));
+    setInput('');
+    speech.clearError();
+  }, [speech.error]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keyboard shortcut: Ctrl+Shift+V (Win/Linux) or Cmd+Shift+V (Mac)
+  useEffect(() => {
+    if (!open || !speech.isSupported) return;
+    const handler = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'V') {
+        e.preventDefault();
+        micToggleRef.current?.();
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [open, speech.isSupported]);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, open]);
   useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
@@ -936,81 +994,201 @@ export default function ChatBot() {
             <div ref={bottomRef} />
           </div>
 
-          {/* ── Input row ── */}
+          {/* ── Input area ── */}
           <form
             onSubmit={handleSend}
-            className="flex gap-2 flex-shrink-0 p-3"
+            className="flex-shrink-0 p-3"
             style={{ borderTop: '1px solid var(--color-border)' }}
           >
-            <input
-              ref={inputRef}
-              type="text"
-              placeholder={
-                pendingEmailContext
-                  ? "Enter email address…"
-                  : "Ask about tasks, schedule, emails…"
-              }
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              disabled={loading}
-              style={{
-                flex:          1,
-                background:    'var(--color-bg-raised)',
-                border:        '1px solid var(--color-border)',
-                borderRadius:  '4px',
-                padding:       '8px 12px',
-                color:         'var(--color-text-primary)',
-                fontFamily:    "'Rajdhani', sans-serif",
-                fontSize:      '14px',
-                letterSpacing: '0.02em',
-                outline:       'none',
-                caretColor:    'var(--color-neon-cyan)',
-                transition:    'border-color 250ms, box-shadow 250ms',
-                opacity:       loading ? 0.5 : 1,
-              }}
-              onFocus={(e) => {
-                e.target.style.borderColor = 'var(--color-border-bright)';
-                e.target.style.boxShadow   = '0 0 0 3px var(--color-neon-cyan-glow)';
-              }}
-              onBlur={(e) => {
-                e.target.style.borderColor = 'var(--color-border)';
-                e.target.style.boxShadow   = 'none';
-              }}
-            />
-            <button
-              type="submit"
-              disabled={loading || !input.trim()}
-              aria-label="Send message"
-              style={{
-                background:     'transparent',
-                border:         '1px solid var(--color-neon-cyan)',
-                borderRadius:   '4px',
-                padding:        '8px 12px',
-                color:          'var(--color-neon-cyan)',
-                cursor:         loading || !input.trim() ? 'not-allowed' : 'pointer',
-                display:        'flex',
-                alignItems:     'center',
-                justifyContent: 'center',
-                minWidth:       '44px',
-                minHeight:      '40px',
-                opacity:        loading || !input.trim() ? 0.35 : 1,
-                transition:     'box-shadow 250ms, background 250ms, transform 150ms',
-              }}
-              onMouseEnter={(e) => {
-                if (!loading && input.trim()) {
-                  e.currentTarget.style.boxShadow = '0 0 10px rgba(0,212,255,0.5)';
-                  e.currentTarget.style.background = 'var(--color-neon-cyan-glow)';
+            {/* ── Listening indicator (shown only while mic is active) ── */}
+            {speech.isListening && (
+              <div
+                style={{
+                  display:        'flex',
+                  alignItems:     'center',
+                  gap:            '5px',
+                  marginBottom:   '6px',
+                  paddingLeft:    '2px',
+                }}
+              >
+                <span
+                  style={{
+                    color:     'var(--color-danger)',
+                    fontSize:  '10px',
+                    animation: 'recordPulse 1s ease-in-out infinite',
+                    lineHeight: 1,
+                  }}
+                  aria-hidden="true"
+                >
+                  ●
+                </span>
+                <span
+                  style={{
+                    fontFamily:    "'Rajdhani', sans-serif",
+                    fontSize:      '10px',
+                    fontWeight:    600,
+                    letterSpacing: '0.14em',
+                    textTransform: 'uppercase',
+                    color:         'var(--color-danger)',
+                  }}
+                >
+                  Listening…
+                </span>
+                <span
+                  style={{
+                    fontFamily:    "'Rajdhani', sans-serif",
+                    fontSize:      '10px',
+                    letterSpacing: '0.06em',
+                    color:         'var(--color-text-dim)',
+                    marginLeft:    '4px',
+                  }}
+                >
+                  Ctrl+Shift+V to stop
+                </span>
+              </div>
+            )}
+
+            {/* ── Row: [🎤] [input] [➤] ── */}
+            <div className="flex gap-2">
+
+              {/* ── Mic button — hidden when Web Speech API is not supported ── */}
+              {speech.isSupported && (
+                <button
+                  type="button"
+                  onClick={() => micToggleRef.current?.()}
+                  aria-label={speech.isListening ? 'Stop voice input' : 'Start voice input'}
+                  aria-pressed={speech.isListening}
+                  style={{
+                    background:     'transparent',
+                    border:         speech.isListening
+                      ? '1px solid var(--color-neon-cyan)'
+                      : '1px solid var(--color-border)',
+                    borderRadius:   '4px',
+                    padding:        '8px 10px',
+                    color:          speech.isListening
+                      ? 'var(--color-neon-cyan)'
+                      : 'var(--color-text-secondary)',
+                    cursor:         'pointer',
+                    display:        'flex',
+                    alignItems:     'center',
+                    justifyContent: 'center',
+                    minWidth:       '40px',
+                    minHeight:      '40px',
+                    animation:      speech.isListening
+                      ? 'glowPulse 2s ease-in-out infinite'
+                      : 'none',
+                    boxShadow:      speech.isListening
+                      ? '0 0 12px rgba(0,212,255,0.4)'
+                      : 'none',
+                    transition:     'border-color 200ms, color 200ms, box-shadow 200ms',
+                    flexShrink:     0,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!speech.isListening) {
+                      e.currentTarget.style.color       = 'var(--color-neon-cyan)';
+                      e.currentTarget.style.borderColor = 'var(--color-neon-cyan-border)';
+                      e.currentTarget.style.boxShadow   = '0 0 8px rgba(0,212,255,0.3)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!speech.isListening) {
+                      e.currentTarget.style.color       = 'var(--color-text-secondary)';
+                      e.currentTarget.style.borderColor = 'var(--color-border)';
+                      e.currentTarget.style.boxShadow   = 'none';
+                    }
+                  }}
+                  onMouseDown={(e) => { e.currentTarget.style.transform = 'scale(0.92)'; }}
+                  onMouseUp={(e)   => { e.currentTarget.style.transform = 'scale(1)'; }}
+                >
+                  <Mic size={15} aria-hidden="true" />
+                </button>
+              )}
+
+              {/* ── Text input ── */}
+              <input
+                ref={inputRef}
+                type="text"
+                placeholder={
+                  speech.isListening    ? "Listening — speak now…"  :
+                  pendingEmailContext   ? "Enter email address…"     :
+                                         "Ask about tasks, schedule, emails…"
                 }
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.boxShadow = 'none';
-                e.currentTarget.style.background = 'transparent';
-              }}
-              onMouseDown={(e) => { e.currentTarget.style.transform = 'scale(0.96)'; }}
-              onMouseUp={(e)   => { e.currentTarget.style.transform = 'scale(1)'; }}
-            >
-              <Send size={15} aria-hidden="true" />
-            </button>
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                disabled={loading}
+                style={{
+                  flex:          1,
+                  background:    'var(--color-bg-raised)',
+                  border:        speech.isListening
+                    ? '1px solid var(--color-border-bright)'
+                    : '1px solid var(--color-border)',
+                  borderRadius:  '4px',
+                  padding:       '8px 12px',
+                  color:         speech.isListening
+                    ? 'var(--color-text-secondary)'
+                    : 'var(--color-text-primary)',
+                  fontFamily:    "'Rajdhani', sans-serif",
+                  fontSize:      '14px',
+                  letterSpacing: '0.02em',
+                  outline:       'none',
+                  caretColor:    'var(--color-neon-cyan)',
+                  transition:    'border-color 200ms, box-shadow 200ms, color 200ms',
+                  opacity:       loading ? 0.5 : 1,
+                  boxShadow:     speech.isListening
+                    ? '0 0 0 3px var(--color-neon-cyan-glow), 0 0 12px rgba(0,212,255,0.25)'
+                    : 'none',
+                }}
+                onFocus={(e) => {
+                  if (!speech.isListening) {
+                    e.target.style.borderColor = 'var(--color-border-bright)';
+                    e.target.style.boxShadow   = '0 0 0 3px var(--color-neon-cyan-glow)';
+                  }
+                }}
+                onBlur={(e) => {
+                  if (!speech.isListening) {
+                    e.target.style.borderColor = 'var(--color-border)';
+                    e.target.style.boxShadow   = 'none';
+                  }
+                }}
+              />
+
+              {/* ── Send button ── */}
+              <button
+                type="submit"
+                disabled={loading || !input.trim()}
+                aria-label="Send message"
+                style={{
+                  background:     'transparent',
+                  border:         '1px solid var(--color-neon-cyan)',
+                  borderRadius:   '4px',
+                  padding:        '8px 12px',
+                  color:          'var(--color-neon-cyan)',
+                  cursor:         loading || !input.trim() ? 'not-allowed' : 'pointer',
+                  display:        'flex',
+                  alignItems:     'center',
+                  justifyContent: 'center',
+                  minWidth:       '44px',
+                  minHeight:      '40px',
+                  opacity:        loading || !input.trim() ? 0.35 : 1,
+                  transition:     'box-shadow 250ms, background 250ms, transform 150ms',
+                  flexShrink:     0,
+                }}
+                onMouseEnter={(e) => {
+                  if (!loading && input.trim()) {
+                    e.currentTarget.style.boxShadow = '0 0 10px rgba(0,212,255,0.5)';
+                    e.currentTarget.style.background = 'var(--color-neon-cyan-glow)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.boxShadow = 'none';
+                  e.currentTarget.style.background = 'transparent';
+                }}
+                onMouseDown={(e) => { e.currentTarget.style.transform = 'scale(0.96)'; }}
+                onMouseUp={(e)   => { e.currentTarget.style.transform = 'scale(1)'; }}
+              >
+                <Send size={15} aria-hidden="true" />
+              </button>
+            </div>
           </form>
         </div>
       )}
