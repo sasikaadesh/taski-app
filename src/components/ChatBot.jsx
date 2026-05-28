@@ -826,7 +826,7 @@ export default function ChatBot({
             lineHeight:    1,
           }}
         >
-          JARVIS
+          TASKI
         </div>
         <div
           style={{
@@ -976,7 +976,7 @@ export default function ChatBot({
                     width:         '100%',
                   }}
                 >
-                  {/* "JARVIS:" prefix */}
+                  {/* "TASKI:" prefix */}
                   <span
                     style={{
                       fontFamily:    "'Orbitron', sans-serif",
@@ -989,7 +989,7 @@ export default function ChatBot({
                       opacity:       0.7,
                     }}
                   >
-                    JARVIS
+                    TASKI
                   </span>
                   {msg.content}
 
@@ -1180,7 +1180,7 @@ export default function ChatBot({
             placeholder={
               speech.isListening  ? 'Listening — speak now…'    :
               pendingEmailContext  ? 'Enter email address…'       :
-                                    'Ask JARVIS anything…'
+                                    'Ask TASKI anything…'
             }
             value={input}
             onChange={(e) => setInput(e.target.value)}

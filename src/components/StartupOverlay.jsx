@@ -210,7 +210,7 @@ export default function StartupOverlay({ onDone, isMuted }) {
           transition:    'opacity 0.4s ease',
         }}
       >
-        Initializing JARVIS...
+        Initializing TASKI...
       </div>
     </div>
   );

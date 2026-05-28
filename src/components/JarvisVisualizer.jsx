@@ -432,7 +432,7 @@ export default function JarvisVisualizer({
           onClick={onMuteToggle}
           aria-label={isMuted ? 'Unmute voice' : 'Mute voice'}
           aria-pressed={isMuted}
-          title={isMuted ? 'Voice is muted — click to unmute' : 'Click to mute JARVIS voice'}
+          title={isMuted ? 'Voice is muted — click to unmute' : 'Click to mute TASKI voice'}
           style={{
             width:          '40px',
             height:         '40px',

@@ -9,7 +9,18 @@ import TodoList from './components/TodoList';
 import ChatBot  from './components/ChatBot';
 import JarvisVisualizer from './components/JarvisVisualizer';
 import StartupOverlay   from './components/StartupOverlay';
+import DateTimeGadget   from './components/DateTimeGadget';
+import LocationGadget   from './components/LocationGadget';
+import MusicControls    from './components/MusicControls';
 import { createCalendarEvent } from './lib/googleCalendar';
+import {
+  startAmbient,
+  stopAmbient,
+  setAmbientVolume,
+  duckAmbient,
+  duckAmbientForSpeech,
+  restoreAmbient,
+} from './lib/ambientSound';
 
 const STORAGE_KEY    = 'taski-todos';
 const STARTUP_FLAG   = 'taski-startup-done';
@@ -77,6 +88,57 @@ export default function App() {
   function handleStartupDone() {
     sessionStorage.setItem(STARTUP_FLAG, '1');
     setStartupDone(true);
+  }
+
+  // ── Ambient music state ───────────────────────────────────────────────────
+  const [isAmbientPlaying, setIsAmbientPlaying] = useState(false);
+  const [ambientVolume,    setAmbientVolumeState] = useState(40); // 0–100
+  const ambientStartedRef = useRef(false);
+
+  // Start ambient music on first user interaction (browser autoplay policy)
+  useEffect(() => {
+    const handleFirstInteraction = () => {
+      if (ambientStartedRef.current) return;
+      ambientStartedRef.current = true;
+      startAmbient();
+      setIsAmbientPlaying(true);
+    };
+    document.addEventListener('click',     handleFirstInteraction, { once: true });
+    document.addEventListener('keydown',   handleFirstInteraction, { once: true });
+    document.addEventListener('touchstart',handleFirstInteraction, { once: true });
+    return () => {
+      document.removeEventListener('click',     handleFirstInteraction);
+      document.removeEventListener('keydown',   handleFirstInteraction);
+      document.removeEventListener('touchstart',handleFirstInteraction);
+    };
+  }, []);
+
+  // Duck / restore ambient music based on visualizer state
+  useEffect(() => {
+    if (!isAmbientPlaying) return;
+    if (visualizerState === 'listening' || visualizerState === 'processing') {
+      duckAmbient();
+    } else if (visualizerState === 'speaking') {
+      duckAmbientForSpeech();
+    } else {
+      restoreAmbient();
+    }
+  }, [visualizerState, isAmbientPlaying]);
+
+  function toggleAmbient() {
+    if (isAmbientPlaying) {
+      stopAmbient();
+      setIsAmbientPlaying(false);
+    } else {
+      startAmbient();
+      setIsAmbientPlaying(true);
+      ambientStartedRef.current = true;
+    }
+  }
+
+  function handleAmbientVolume(val) {
+    setAmbientVolumeState(val);
+    setAmbientVolume(val / 100);
   }
 
   // ── Responsive: mobile todo sidebar ──────────────────────────────────────
@@ -314,39 +376,83 @@ export default function App() {
         </div>
 
         {/* ════════════════════════════════════════
-            CENTER ZONE — Jarvis visualizer
+            CENTER ZONE — Jarvis visualizer + gadgets
         ════════════════════════════════════════ */}
         <div
           className="center-zone"
           style={{
-            flex:           1,
-            display:        'flex',
-            flexDirection:  'column',
-            alignItems:     'center',
-            justifyContent: 'center',
-            position:       'relative',
-            overflow:       'hidden',
+            flex:      1,
+            display:   'flex',
+            flexDirection: 'column',
+            position:  'relative',
+            overflow:  'hidden',
           }}
         >
           {/* Background scan-line effect */}
           <div
             aria-hidden="true"
             style={{
-              position:    'absolute',
-              inset:       0,
-              background:  'linear-gradient(to bottom, transparent 40%, rgba(0,212,255,0.015) 50%, transparent 60%)',
-              animation:   'scanLine 6s ease-in-out infinite',
+              position:      'absolute',
+              inset:         0,
+              background:    'linear-gradient(to bottom, transparent 40%, rgba(0,212,255,0.015) 50%, transparent 60%)',
+              animation:     'scanLine 6s ease-in-out infinite',
               pointerEvents: 'none',
+              zIndex:        0,
             }}
           />
 
-          <JarvisVisualizer
-            state={visualizerState}
-            onMicClick={handleMicClick}
-            isMuted={isMuted}
-            onMuteToggle={() => setIsMuted((m) => !m)}
-            isSupported={isMicSupported}
-          />
+          {/* Scrollable inner column */}
+          <div
+            style={{
+              position:       'relative',
+              zIndex:         1,
+              flex:           1,
+              overflowY:      'auto',
+              display:        'flex',
+              flexDirection:  'column',
+              alignItems:     'center',
+              padding:        '32px 24px 40px',
+              gap:            0,
+            }}
+          >
+            {/* Visualizer */}
+            <JarvisVisualizer
+              state={visualizerState}
+              onMicClick={handleMicClick}
+              isMuted={isMuted}
+              onMuteToggle={() => setIsMuted((m) => !m)}
+              isSupported={isMicSupported}
+            />
+
+            {/* Gap between visualizer and DateTime */}
+            <div style={{ height: '32px', flexShrink: 0 }} />
+
+            {/* DateTime gadget (includes its own top + bottom dividers) */}
+            <DateTimeGadget />
+
+            {/* Gap + Location gadget */}
+            <div style={{ height: '24px', flexShrink: 0 }} />
+            <LocationGadget />
+
+            {/* Dashed divider before music controls */}
+            <div style={{ height: '24px', flexShrink: 0 }} />
+            <div
+              aria-hidden="true"
+              style={{
+                width:     '80%',
+                borderTop: '1px dashed rgba(0,212,255,0.2)',
+                marginBottom: '20px',
+              }}
+            />
+
+            {/* Ambient music controls */}
+            <MusicControls
+              playing={isAmbientPlaying}
+              volume={ambientVolume}
+              onToggle={toggleAmbient}
+              onVolumeChange={handleAmbientVolume}
+            />
+          </div>
         </div>
 
         {/* ════════════════════════════════════════
