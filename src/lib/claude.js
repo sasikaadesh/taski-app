@@ -12,7 +12,7 @@ const API_URL = 'https://api.anthropic.com/v1/messages';
  * @param {string} options.system - Optional system prompt
  * @returns {Promise<string>}     - Claude's final text response
  */
-export async function callClaude(messages, { system = '' } = {}) {
+export async function callClaude(messages, { system = '', maxTokens = 1024 } = {}) {
   if (!ANTHROPIC_API_KEY) {
     throw new Error(
       'Missing VITE_ANTHROPIC_API_KEY — copy .env.example → .env and add your key.'
@@ -21,7 +21,7 @@ export async function callClaude(messages, { system = '' } = {}) {
 
   const body = {
     model: MODEL,
-    max_tokens: 1024,
+    max_tokens: maxTokens,
     messages,
   };
 

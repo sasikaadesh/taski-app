@@ -6,6 +6,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Loader2, Mic } from 'lucide-react';
 import { callClaude, CHATBOT_SYSTEM, EMAIL_DRAFT_SYSTEM } from '../lib/claude';
+import { analyzeAndPlanOrganization, groupByFolder } from '../lib/folderOrganizer';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import {
   getCalendarEventsForRange,
@@ -161,33 +162,62 @@ function detectDateRange(text) {
 // ── Folder organizer intent detection ────────────────────────────────────────
 
 const FOLDER_KEYWORDS = [
-  'organize', 'organise', 'folder', 'files', 'downloads',
-  'arrange', 'sort files', 'clean up folder', 'clean up downloads',
-  'sort my', 'organize my', 'organise my', 'clean my files',
+  'organize my', 'organise my', 'sort my', 'clean up my', 'tidy up my',
+  'organize the', 'organise the', 'sort the', 'clean up the',
+  'organize files', 'organise files', 'sort files',
+  'file organizer', 'messy folder', 'messy downloads',
+  'tidy up', 'clean up folder', 'clean up downloads',
+  'arrange my files', 'arrange files',
 ];
 
+// Named special folders the chatbot can resolve via getSpecialFolders()
+const NAMED_FOLDERS = {
+  downloads:  /\b(downloads?|download\s+folder)\b/i,
+  documents:  /\b(documents?|docs?)\b/i,
+  desktop:    /\bdesktop\b/i,
+  pictures:   /\b(pictures?|photos?|images?)\b/i,
+  music:      /\bmusic\b/i,
+  videos:     /\bvideos?\b/i,
+};
+
 function hasFolderIntent(text) {
-  if (!window.taskiAPI) return false;
+  if (!window.taskiAPI?.isElectron) return false;
   const lower = text.toLowerCase();
   return FOLDER_KEYWORDS.some((kw) => lower.includes(kw));
 }
 
+function extractNamedFolder(text) {
+  for (const [key, re] of Object.entries(NAMED_FOLDERS)) {
+    if (re.test(text)) return key;
+  }
+  return null;
+}
+
 function isOrgConfirmation(text) {
-  const lower = text.toLowerCase().trim();
-  return /^(yes|yeah|yep|sure|proceed|go ahead|do it|confirm|ok|okay|execute|organize|organise|yes please|please do|do so|absolutely|affirmative)\b/.test(lower);
+  const t = text.trim().toUpperCase();
+  if (t === 'CONFIRM' || t === 'YES' || t === 'GO') return true;
+  return /^(yes|yeah|yep|sure|proceed|go ahead|do it|ok|okay|execute|absolutely|affirmative|please do)\b/i.test(text.trim());
 }
 
 function isOrgDenial(text) {
-  const lower = text.toLowerCase().trim();
-  return /^(no|nope|cancel|stop|abort|don't|do not|never mind|nevermind|negative|not now)\b/.test(lower);
+  const t = text.trim().toUpperCase();
+  if (t === 'CANCEL' || t === 'NO' || t === 'STOP') return true;
+  return /^(no|nope|cancel|stop|abort|don't|do not|never mind|nevermind|negative|not now)\b/i.test(text.trim());
 }
 
-function buildFolderPlanMsg(planSummary, totalFiles) {
-  const folderLines = Object.entries(planSummary)
-    .map(([folder, count]) => `${folder} with ${count} file${count !== 1 ? 's' : ''}`)
-    .join(', ');
-  const folderCount = Object.keys(planSummary).length;
-  return `I found ${totalFiles} files. I plan to create ${folderCount} folder${folderCount !== 1 ? 's' : ''} including ${folderLines}. Shall I proceed?`;
+function buildPlanMessage(grouped, totalFiles) {
+  const lines = Object.entries(grouped)
+    .map(([folder, data]) => {
+      const count = typeof data === 'number' ? data : data.count;
+      return `📁 ${folder}: ${count} file${count !== 1 ? 's' : ''}`;
+    })
+    .join('\n');
+  const folderCount = Object.keys(grouped).length;
+  return (
+    `Here is my plan:\n${lines}\n\n` +
+    `${totalFiles} files will be organized into ${folderCount} folder${folderCount !== 1 ? 's' : ''}.\n` +
+    `Type CONFIRM to proceed or CANCEL to abort.`
+  );
 }
 
 // ── Gmail query builder ───────────────────────────────────────────────────────
@@ -559,26 +589,10 @@ export default function ChatBot({
       `Never ask the user what today's date is.`;
 
     // ════════════════════════════════════════════════════════════════════════
-    // BRANCH 0 — Pending folder organization confirmation
+    // BRANCH 0 — Pending folder organization (two-phase confirmation)
     // ════════════════════════════════════════════════════════════════════════
     if (pendingFolderPlan) {
-      if (isOrgConfirmation(text)) {
-        try {
-          const res     = await window.taskiAPI.organizeFolder(pendingFolderPlan.plan);
-          const folders = Object.keys(pendingFolderPlan.planSummary).length;
-          const doneMsg = `Done. ${res.moved} file${res.moved !== 1 ? 's' : ''} organized into ${folders} folder${folders !== 1 ? 's' : ''}.`;
-          setMessages((prev) => [...prev, { role: 'assistant', content: doneMsg }].slice(-MAX_MESSAGES));
-          speakText(doneMsg);
-          window.taskiAPI.showNotification('Taski', doneMsg).catch(() => {});
-        } catch (err) {
-          const msg = `There was an issue organizing the files: ${err.message}`;
-          setMessages((prev) => [...prev, { role: 'assistant', content: msg }].slice(-MAX_MESSAGES));
-          speakText(msg);
-        }
-        setPendingFolderPlan(null);
-        setLoading(false);
-        return;
-      }
+      const { phase, files, plan, grouped, folderPath: fp, folderName } = pendingFolderPlan;
 
       if (isOrgDenial(text)) {
         const msg = "Understood. The folder organization has been cancelled.";
@@ -589,7 +603,63 @@ export default function ChatBot({
         return;
       }
 
-      // User asked something else — clear the pending plan and fall through
+      if (isOrgConfirmation(text)) {
+        // Phase 1: user confirmed scan → run AI planning
+        if (phase === 'awaiting_analysis') {
+          const thinkingMsg = `Analyzing your ${folderName} folder with AI. Please wait...`;
+          setMessages((prev) => [...prev, { role: 'assistant', content: thinkingMsg }].slice(-MAX_MESSAGES));
+          speakText(thinkingMsg);
+
+          try {
+            const { plan: aiPlan, summary } = await analyzeAndPlanOrganization(files, fp);
+            const g = groupByFolder(aiPlan);
+            const totalFiles = files.filter((f) => f.type === 'file').length;
+            const planMsg = buildPlanMessage(g, totalFiles);
+
+            setMessages((prev) => [...prev, { role: 'assistant', content: planMsg }].slice(-MAX_MESSAGES));
+            speakText(
+              `I have prepared a plan. I will organize ${totalFiles} files into ` +
+              `${Object.keys(g).length} folders. Say CONFIRM to proceed.`,
+            );
+            setPendingFolderPlan({ ...pendingFolderPlan, phase: 'awaiting_execute', plan: aiPlan, grouped: g });
+          } catch (err) {
+            const msg = `I had trouble analyzing the folder: ${err.message}`;
+            setMessages((prev) => [...prev, { role: 'assistant', content: msg }].slice(-MAX_MESSAGES));
+            speakText(msg);
+            setPendingFolderPlan(null);
+          }
+          setLoading(false);
+          return;
+        }
+
+        // Phase 2: user confirmed plan → execute
+        if (phase === 'awaiting_execute') {
+          try {
+            const execMsg = "Organizing now. Please wait...";
+            setMessages((prev) => [...prev, { role: 'assistant', content: execMsg }].slice(-MAX_MESSAGES));
+            speakText(execMsg);
+
+            const res     = await window.taskiAPI.organizeFolder(plan);
+            const folders = Object.keys(grouped).length;
+            const doneMsg =
+              `Done. ${res.moved} file${res.moved !== 1 ? 's' : ''} organized into ` +
+              `${folders} folder${folders !== 1 ? 's' : ''}.` +
+              (res.errors?.length ? ` ${res.errors.length} file(s) could not be moved.` : '');
+            setMessages((prev) => [...prev, { role: 'assistant', content: doneMsg }].slice(-MAX_MESSAGES));
+            speakText(doneMsg);
+            window.taskiAPI.showNotification('Taski', doneMsg).catch(() => {});
+          } catch (err) {
+            const msg = `There was an issue organizing the files: ${err.message}`;
+            setMessages((prev) => [...prev, { role: 'assistant', content: msg }].slice(-MAX_MESSAGES));
+            speakText(msg);
+          }
+          setPendingFolderPlan(null);
+          setLoading(false);
+          return;
+        }
+      }
+
+      // User said something unrelated — clear pending and fall through
       setPendingFolderPlan(null);
     }
 
@@ -714,10 +784,12 @@ export default function ChatBot({
     // BRANCH 2.5 — Folder organize intent (Electron only)
     // ════════════════════════════════════════════════════════════════════════
     if (hasFolderIntent(text)) {
-      const wantsDownloads = /\b(downloads?|my\s+downloads?|download\s+folder)\b/i.test(text);
+      const namedFolder = extractNamedFolder(text);
 
-      if (!wantsDownloads) {
-        const msg = "Of course. Which folder would you like me to organize? I can access your Downloads folder directly, or you can specify any folder path.";
+      if (!namedFolder) {
+        const msg =
+          "Of course. Which folder would you like me to organize? " +
+          "You can say 'downloads', 'documents', 'desktop', 'pictures', 'music', or 'videos'.";
         setMessages((prev) => [...prev, { role: 'assistant', content: msg }].slice(-MAX_MESSAGES));
         speakText(msg);
         setLoading(false);
@@ -725,54 +797,49 @@ export default function ChatBot({
       }
 
       try {
-        const scanningMsg = "Accessing your Downloads folder now...";
-        setMessages((prev) => [...prev, { role: 'assistant', content: scanningMsg }].slice(-MAX_MESSAGES));
-        speakText(scanningMsg);
+        const displayName = namedFolder.charAt(0).toUpperCase() + namedFolder.slice(1);
+        const scanMsg = `Accessing your ${displayName} folder now...`;
+        setMessages((prev) => [...prev, { role: 'assistant', content: scanMsg }].slice(-MAX_MESSAGES));
+        speakText(scanMsg);
 
-        const downloadsPath = await window.taskiAPI.getDownloadsPath();
-        const scannedFiles  = await window.taskiAPI.scanFolder(downloadsPath);
+        const specialFolders = await window.taskiAPI.getSpecialFolders();
+        const targetPath     = specialFolders[namedFolder];
 
-        if (scannedFiles.length === 0) {
-          const msg = "Your Downloads folder appears to be empty.";
+        if (!targetPath) throw new Error(`Could not locate your ${displayName} folder.`);
+
+        const items = await window.taskiAPI.scanFolder(targetPath);
+        const fileItems = items.filter((f) => f.type === 'file');
+
+        if (fileItems.length === 0) {
+          const msg = `Your ${displayName} folder has no files to organize.`;
           setMessages((prev) => [...prev, { role: 'assistant', content: msg }].slice(-MAX_MESSAGES));
           speakText(msg);
           setLoading(false);
           return;
         }
 
-        const ORGANIZER_SYSTEM = `You are a file organization expert. Given a list of file names, return a JSON array assigning each file to the best folder. Categories: Images, Videos, Documents, Audio, Archives, Installers, Code, Design, Others. Return ONLY a valid JSON array — no markdown, no explanation: [{"file":"photo.jpg","folder":"Images"}]`;
-        const fileList = scannedFiles.map((f) => f.name).join('\n');
-
-        const raw = await callClaude(
-          [{ role: 'user', content: `Organize these files:\n${fileList}` }],
-          { system: ORGANIZER_SYSTEM },
+        const foundMsg =
+          `I found ${fileItems.length} file${fileItems.length !== 1 ? 's' : ''} in your ` +
+          `${displayName} folder. Shall I analyze and organize them? I will group them ` +
+          `into Images, Documents, Videos and other logical categories.\n` +
+          `Type CONFIRM to proceed or CANCEL to abort.`;
+        setMessages((prev) => [...prev, { role: 'assistant', content: foundMsg }].slice(-MAX_MESSAGES));
+        speakText(
+          `I found ${fileItems.length} files in your ${displayName} folder. ` +
+          `Shall I analyze and organize them?`,
         );
 
-        const stripped  = raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
-        const jsonMatch = stripped.match(/\[[\s\S]*\]/);
-        if (!jsonMatch) throw new Error('Could not parse organization plan');
-
-        const parsed  = JSON.parse(jsonMatch[0]);
-        const fileMap = {};
-        for (const f of scannedFiles) fileMap[f.name] = f.path;
-
-        const enriched = parsed
-          .filter((item) => fileMap[item.file])
-          .map((item) => ({ ...item, sourcePath: fileMap[item.file] }));
-
-        const planSummary = {};
-        for (const item of enriched) {
-          planSummary[item.folder] = (planSummary[item.folder] || 0) + 1;
-        }
-
-        const planMsg = buildFolderPlanMsg(planSummary, scannedFiles.length);
-        setMessages((prev) => [...prev, { role: 'assistant', content: planMsg }].slice(-MAX_MESSAGES));
-        speakText(planMsg);
-
-        setPendingFolderPlan({ files: scannedFiles, plan: enriched, planSummary, folderPath: downloadsPath });
+        setPendingFolderPlan({
+          phase:      'awaiting_analysis',
+          files:      items,
+          plan:       null,
+          grouped:    null,
+          folderPath: targetPath,
+          folderName: displayName,
+        });
 
       } catch (err) {
-        const msg = `I encountered an issue accessing your Downloads folder: ${err.message}`;
+        const msg = `I encountered an issue: ${err.message}`;
         setMessages((prev) => [...prev, { role: 'assistant', content: msg }].slice(-MAX_MESSAGES));
         speakText(msg);
       }
