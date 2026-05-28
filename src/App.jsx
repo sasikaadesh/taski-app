@@ -4,9 +4,10 @@
 // RIGHT: ChatBot full-height panel.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import TodoForm from './components/TodoForm';
-import TodoList from './components/TodoList';
-import ChatBot  from './components/ChatBot';
+import TodoForm        from './components/TodoForm';
+import TodoList        from './components/TodoList';
+import ChatBot         from './components/ChatBot';
+import FolderOrganizer from './components/FolderOrganizer';
 import JarvisVisualizer from './components/JarvisVisualizer';
 import StartupOverlay   from './components/StartupOverlay';
 import DateTimeGadget   from './components/DateTimeGadget';
@@ -367,6 +368,9 @@ export default function App() {
                 </p>
               </div>
             )}
+
+            {/* Folder organizer — visible only when running in Electron */}
+            <FolderOrganizer />
           </div>
         </div>
 
