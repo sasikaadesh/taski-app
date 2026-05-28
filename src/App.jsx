@@ -91,25 +91,21 @@ export default function App() {
   }
 
   // ── Ambient music state ───────────────────────────────────────────────────
-  const [isAmbientPlaying, setIsAmbientPlaying] = useState(false);
+  const [isAmbientPlaying, setIsAmbientPlaying] = useState(true);
   const [ambientVolume,    setAmbientVolumeState] = useState(40); // 0–100
-  const ambientStartedRef = useRef(false);
 
-  // Start ambient music on first user interaction (browser autoplay policy)
+  // Attempt autoplay immediately; re-attempt on first interaction as fallback
+  // (browsers may block autoplay until the user has interacted with the page)
   useEffect(() => {
-    const handleFirstInteraction = () => {
-      if (ambientStartedRef.current) return;
-      ambientStartedRef.current = true;
-      startAmbient();
-      setIsAmbientPlaying(true);
-    };
-    document.addEventListener('click',     handleFirstInteraction, { once: true });
-    document.addEventListener('keydown',   handleFirstInteraction, { once: true });
-    document.addEventListener('touchstart',handleFirstInteraction, { once: true });
+    startAmbient();
+    const resume = () => startAmbient();
+    document.addEventListener('click',      resume, { once: true });
+    document.addEventListener('keydown',    resume, { once: true });
+    document.addEventListener('touchstart', resume, { once: true });
     return () => {
-      document.removeEventListener('click',     handleFirstInteraction);
-      document.removeEventListener('keydown',   handleFirstInteraction);
-      document.removeEventListener('touchstart',handleFirstInteraction);
+      document.removeEventListener('click',      resume);
+      document.removeEventListener('keydown',    resume);
+      document.removeEventListener('touchstart', resume);
     };
   }, []);
 
@@ -132,7 +128,6 @@ export default function App() {
     } else {
       startAmbient();
       setIsAmbientPlaying(true);
-      ambientStartedRef.current = true;
     }
   }
 

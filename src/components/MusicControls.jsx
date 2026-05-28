@@ -1,4 +1,4 @@
-// MusicControls — play/pause + volume slider for the ambient Web Audio background layer.
+// MusicControls — play/pause + volume slider for the ambient HTML5 Audio background track.
 
 import { useEffect, useRef } from 'react';
 
@@ -93,21 +93,40 @@ export default function MusicControls({ playing, volume, onToggle, onVolumeChang
         }}
       />
 
-      {/* Music note + label */}
-      <span
+      {/* Track info */}
+      <div
         style={{
-          fontFamily:    "'Rajdhani', sans-serif",
-          fontSize:      '11px',
-          fontWeight:    500,
-          letterSpacing: '0.1em',
-          textTransform: 'uppercase',
-          color:         'rgba(0,212,255,0.4)',
-          flexShrink:    0,
-          userSelect:    'none',
+          display:    'flex',
+          flexDirection: 'column',
+          gap:        '2px',
+          flexShrink: 0,
+          userSelect: 'none',
         }}
       >
-        ♪ AMBIENT
-      </span>
+        <span
+          style={{
+            fontFamily:    "'Rajdhani', sans-serif",
+            fontSize:      '10px',
+            fontWeight:    500,
+            letterSpacing: '0.1em',
+            textTransform: 'uppercase',
+            color:         'var(--color-text-dim)',
+          }}
+        >
+          AMBIENT TRACK
+        </span>
+        <span
+          style={{
+            fontFamily:    "'Rajdhani', sans-serif",
+            fontSize:      '10px',
+            fontWeight:    500,
+            letterSpacing: '0.05em',
+            color:         'var(--color-neon-cyan)',
+          }}
+        >
+          ↻ LOOP
+        </span>
+      </div>
     </div>
   );
 }
