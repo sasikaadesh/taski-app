@@ -71,11 +71,30 @@ const SECTIONS = [
     ],
   },
   {
+    title: 'SLASH COMMAND SKILLS',
+    items: [
+      'Type / in the chat to see all available skills and filter by name',
+      '/youtube   — YouTube titles, descriptions, SEO strategy',
+      '/linkedin  — Professional posts, profiles, networking',
+      '/email     — Business email writing and subject lines',
+      '/essay     — Academic writing, arguments, citations',
+      '/learn     — Step by step learning on any topic',
+      '/school    — Homework help, exam prep, study plans',
+      '/code      — Code review, debugging, architecture',
+      '/health    — Wellness, fitness, and nutrition guidance',
+      '/finance   — Personal finance and budgeting basics',
+      '/whatsapp  — WhatsApp message crafting',
+      '/clear     — Return to standard TASKI mode',
+    ],
+  },
+  {
     title: 'KEYBOARD SHORTCUTS',
     items: [
       'Ctrl+Shift+V    Toggle voice input',
       'Escape          Close modals and panels',
       'Enter           Send chat message',
+      'Arrow keys      Navigate skill autocomplete menu',
+      'Tab             Select highlighted skill',
     ],
   },
   {

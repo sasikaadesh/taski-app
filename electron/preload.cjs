@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('taskiAPI', {
 
   // System
   showNotification: (title, body) => ipcRenderer.invoke('show-notification', title, body),
+  loadSkills:       ()            => ipcRenderer.invoke('load-skills'),
 
   isElectron: true,
 })

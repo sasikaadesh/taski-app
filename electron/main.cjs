@@ -295,3 +295,15 @@ ipcMain.handle('undo-organize', async (_event, moves) => {
 ipcMain.handle('show-notification', async (_event, title, body) => {
   if (Notification.isSupported()) new Notification({ title, body }).show()
 })
+
+// ── IPC: load-skills ──────────────────────────────────────────────────────────
+
+ipcMain.handle('load-skills', async () => {
+  const skillsPath = path.join(__dirname, '../skills')
+  if (!fs.existsSync(skillsPath)) return []
+  const files = fs.readdirSync(skillsPath).filter((f) => f.endsWith('.md'))
+  return files.map((file) => {
+    const content = fs.readFileSync(path.join(skillsPath, file), 'utf-8')
+    return { file, content }
+  })
+})

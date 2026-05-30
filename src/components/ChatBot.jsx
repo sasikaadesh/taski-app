@@ -1,11 +1,12 @@
 // ChatBot — full-height JARVIS assistant panel (right sidebar).
 // Retains all existing functionality: calendar queries, Gmail read/send,
 // email confirmation cards, voice input, multi-turn chat history.
-// NEW: TTS for Claude responses, visualizer state callbacks.
+// NEW: TTS for Claude responses, visualizer state callbacks, slash command skills.
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Loader2, Mic } from 'lucide-react';
 import { callClaude, CHATBOT_SYSTEM, EMAIL_DRAFT_SYSTEM } from '../lib/claude';
+import { getAllSkills, getSkill } from '../lib/skillLoader';
 import { analyzeAndPlanOrganization, groupByFolder } from '../lib/folderOrganizer';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import {
@@ -360,6 +361,33 @@ function getBestVoice() {
   );
 }
 
+// ── Skill voice command detection ─────────────────────────────────────────────
+
+const VOICE_ACTIVATE_RE = /\b(switch\s+to|use\s+the?|activate|enable|start\s+(?:the\s+)?)\b/i;
+const VOICE_CLEAR_RE    = /\b(go\s+back\s+to\s+normal|clear\s+skill|normal\s+mode|standard\s+mode|reset\s+(?:skill|mode)|deactivate\s+skill|no\s+skill)\b/i;
+
+const VOICE_SKILL_KEYWORDS = [
+  { patterns: [/youtube/i],                         trigger: '/youtube'   },
+  { patterns: [/linkedin/i],                        trigger: '/linkedin'  },
+  { patterns: [/\bemail\s+(?:skill|mode|expert)/i], trigger: '/email'     },
+  { patterns: [/essay/i],                           trigger: '/essay'     },
+  { patterns: [/\blearn(?:ing)?\s+(?:skill|mode|tutor)/i, /socratic/i], trigger: '/learn' },
+  { patterns: [/school/i, /homework/i],             trigger: '/school'    },
+  { patterns: [/\bcode\s+(?:skill|mode|review)/i, /developer\s+mode/i], trigger: '/code' },
+  { patterns: [/health/i, /wellness/i, /fitness/i], trigger: '/health'   },
+  { patterns: [/finance/i, /budget(?:ing)?\s+mode/i], trigger: '/finance' },
+  { patterns: [/whatsapp/i],                        trigger: '/whatsapp'  },
+];
+
+function detectVoiceSkill(text) {
+  if (VOICE_CLEAR_RE.test(text)) return '/clear';
+  if (!VOICE_ACTIVATE_RE.test(text)) return null;
+  for (const { patterns, trigger } of VOICE_SKILL_KEYWORDS) {
+    if (patterns.some((re) => re.test(text))) return trigger;
+  }
+  return null;
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 /**
@@ -382,6 +410,13 @@ export default function ChatBot({
   const [emailDrafts,        setEmailDrafts]        = useState({});
   const [pendingEmailContext, setPendingEmailContext] = useState(null);
   const [pendingFolderPlan,   setPendingFolderPlan]  = useState(null);
+
+  // ── Skill state ───────────────────────────────────────────────────────────
+  const [activeSkill,    setActiveSkill]    = useState(null);   // skill object or null
+  const [showSkillMenu,  setShowSkillMenu]  = useState(false);  // autocomplete popup
+  const [skillFilter,    setSkillFilter]    = useState('');     // text after /
+  const [skillMenuIndex, setSkillMenuIndex] = useState(0);      // keyboard nav
+  const ALL_SKILLS = getAllSkills();
 
   const bottomRef  = useRef(null);
   const inputRef   = useRef(null);
@@ -459,6 +494,14 @@ export default function ChatBot({
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
+  // Close skill menu on outside click
+  useEffect(() => {
+    if (!showSkillMenu) return;
+    function onClickOutside() { setShowSkillMenu(false); }
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [showSkillMenu]);
+
   // ── TTS ───────────────────────────────────────────────────────────────────
 
   /**
@@ -485,6 +528,44 @@ export default function ChatBot({
 
     window.speechSynthesis.speak(utterance);
   }, [onVisualizerState]);
+
+  // ── Skill helpers ─────────────────────────────────────────────────────────
+
+  function activateSkill(skill) {
+    setActiveSkill(skill);
+    setShowSkillMenu(false);
+    setInput('');
+    const msg = `TASKI: ${skill.name} mode activated. What would you like help with?`;
+    setMessages((prev) => [...prev, { role: 'assistant', content: msg }].slice(-MAX_MESSAGES));
+    speakText(msg);
+  }
+
+  function clearSkill() {
+    setActiveSkill(null);
+    setShowSkillMenu(false);
+    setInput('');
+    const msg = 'TASKI: Returning to standard mode.';
+    setMessages((prev) => [...prev, { role: 'assistant', content: msg }].slice(-MAX_MESSAGES));
+    speakText(msg);
+  }
+
+  function handleInputChange(e) {
+    const val = e.target.value;
+    setInput(val);
+    if (val.startsWith('/')) {
+      const filter = val.slice(1).toLowerCase();
+      setSkillFilter(filter);
+      setShowSkillMenu(true);
+      setSkillMenuIndex(0);
+    } else {
+      setShowSkillMenu(false);
+    }
+  }
+
+  const filteredSkills = ALL_SKILLS.filter((s) =>
+    s.trigger.slice(1).startsWith(skillFilter) ||
+    s.description.toLowerCase().includes(skillFilter)
+  );
 
   // ── Email draft state handlers ────────────────────────────────────────────
 
@@ -575,6 +656,43 @@ export default function ChatBot({
 
     // Cancel any ongoing TTS
     if (window.speechSynthesis) window.speechSynthesis.cancel();
+
+    // ════════════════════════════════════════════════════════════════════════
+    // BRANCH -1 — Slash command / voice skill activation
+    // ════════════════════════════════════════════════════════════════════════
+    {
+      const trimmed = text.trim().toLowerCase();
+
+      // Direct /trigger command (exact or just the trigger word)
+      if (trimmed === '/clear') {
+        clearSkill();
+        setLoading(false);
+        onVisualizerState?.('idle');
+        return;
+      }
+
+      const exactSkill = getSkill(trimmed);
+      if (exactSkill) {
+        activateSkill(exactSkill);
+        setLoading(false);
+        onVisualizerState?.('idle');
+        return;
+      }
+
+      // Voice command detection
+      const voiceTrigger = detectVoiceSkill(text);
+      if (voiceTrigger) {
+        if (voiceTrigger === '/clear') {
+          clearSkill();
+        } else {
+          const skill = getSkill(voiceTrigger);
+          if (skill) activateSkill(skill);
+        }
+        setLoading(false);
+        onVisualizerState?.('idle');
+        return;
+      }
+    }
 
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const now      = new Date();
@@ -853,6 +971,9 @@ export default function ChatBot({
     // ════════════════════════════════════════════════════════════════════════
     try {
       let system     = `${CHATBOT_SYSTEM}\n\n${dateContext}`;
+      if (activeSkill) {
+        system += `\n\n── ACTIVE SKILL: ${activeSkill.name} ──\n${activeSkill.prompt}`;
+      }
       let checkedTag = null;
 
       const wantsCalendar = hasCalendarIntent(text);
@@ -1034,18 +1155,66 @@ export default function ChatBot({
         >
           TASKI
         </div>
-        <div
-          style={{
-            fontFamily:    "'Rajdhani', sans-serif",
-            fontSize:      '10px',
-            letterSpacing: '0.2em',
-            color:         'rgba(0,212,255,0.4)',
-            textTransform: 'uppercase',
-            marginTop:     '4px',
-          }}
-        >
-          AI ASSISTANT ONLINE
-        </div>
+
+        {/* Skill badge / status line */}
+        {activeSkill ? (
+          <div
+            style={{
+              display:    'flex',
+              alignItems: 'center',
+              gap:        '6px',
+              marginTop:  '4px',
+            }}
+          >
+            <div
+              style={{
+                fontFamily:    "'Rajdhani', sans-serif",
+                fontSize:      '10px',
+                fontWeight:    600,
+                letterSpacing: '0.18em',
+                color:         '#00d4ff',
+                textTransform: 'uppercase',
+                background:    'rgba(0,212,255,0.1)',
+                border:        '1px solid rgba(0,212,255,0.3)',
+                borderRadius:  '3px',
+                padding:       '2px 8px',
+              }}
+            >
+              {activeSkill.trigger} — {activeSkill.name.toUpperCase()}
+            </div>
+            <button
+              onClick={clearSkill}
+              aria-label="Clear active skill"
+              style={{
+                background:  'none',
+                border:      'none',
+                cursor:      'pointer',
+                color:       'rgba(0,212,255,0.4)',
+                fontSize:    '12px',
+                lineHeight:  1,
+                padding:     '0 2px',
+                transition:  'color 150ms',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = '#ff2d55'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(0,212,255,0.4)'; }}
+            >
+              ×
+            </button>
+          </div>
+        ) : (
+          <div
+            style={{
+              fontFamily:    "'Rajdhani', sans-serif",
+              fontSize:      '10px',
+              letterSpacing: '0.2em',
+              color:         'rgba(0,212,255,0.4)',
+              textTransform: 'uppercase',
+              marginTop:     '4px',
+            }}
+          >
+            AI ASSISTANT ONLINE
+          </div>
+        )}
       </div>
 
       {/* ── Messages area ── */}
@@ -1288,6 +1457,84 @@ export default function ChatBot({
           position:      'relative',
         }}
       >
+        {/* ── Skill autocomplete popup ── */}
+        {showSkillMenu && filteredSkills.length > 0 && (
+          <div
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{
+              position:     'absolute',
+              bottom:       '100%',
+              left:         '14px',
+              right:        '14px',
+              marginBottom: '4px',
+              background:   'var(--color-bg-raised)',
+              border:       '1px solid rgba(0,212,255,0.3)',
+              borderRadius: '4px',
+              overflow:     'hidden',
+              boxShadow:    '0 0 20px rgba(0,212,255,0.15)',
+              zIndex:       50,
+            }}
+          >
+            <div
+              style={{
+                fontFamily:    "'Rajdhani', sans-serif",
+                fontSize:      '9px',
+                fontWeight:    600,
+                letterSpacing: '0.2em',
+                textTransform: 'uppercase',
+                color:         'rgba(0,212,255,0.5)',
+                padding:       '6px 12px 4px',
+                borderBottom:  '1px solid rgba(0,212,255,0.1)',
+              }}
+            >
+              SKILLS
+            </div>
+            {filteredSkills.map((skill, idx) => (
+              <button
+                key={skill.trigger}
+                type="button"
+                onClick={() => activateSkill(skill)}
+                style={{
+                  display:       'flex',
+                  alignItems:    'center',
+                  gap:           '10px',
+                  width:         '100%',
+                  padding:       '7px 12px',
+                  background:    idx === skillMenuIndex ? 'rgba(0,212,255,0.1)' : 'transparent',
+                  border:        'none',
+                  borderBottom:  idx < filteredSkills.length - 1 ? '1px solid rgba(0,212,255,0.06)' : 'none',
+                  cursor:        'pointer',
+                  textAlign:     'left',
+                }}
+                onMouseEnter={() => setSkillMenuIndex(idx)}
+              >
+                <span
+                  style={{
+                    fontFamily:    "'Rajdhani', sans-serif",
+                    fontSize:      '13px',
+                    fontWeight:    600,
+                    letterSpacing: '0.04em',
+                    color:         '#00d4ff',
+                    minWidth:      '80px',
+                  }}
+                >
+                  {skill.trigger}
+                </span>
+                <span
+                  style={{
+                    fontFamily:  "'Rajdhani', sans-serif",
+                    fontSize:    '12px',
+                    color:       'var(--color-text-secondary)',
+                    letterSpacing: '0.02em',
+                  }}
+                >
+                  {skill.description}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Listening indicator */}
         {speech.isListening && (
           <div
@@ -1389,11 +1636,26 @@ export default function ChatBot({
             placeholder={
               speech.isListening  ? 'Listening — speak now…'    :
               pendingEmailContext  ? 'Enter email address…'       :
-                                    'Ask TASKI anything…'
+                                    'Ask TASKI anything… (type / for skills)'
             }
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={handleInputChange}
             disabled={loading}
+            onKeyDown={(e) => {
+              if (!showSkillMenu || filteredSkills.length === 0) return;
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setSkillMenuIndex((i) => Math.min(i + 1, filteredSkills.length - 1));
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setSkillMenuIndex((i) => Math.max(i - 1, 0));
+              } else if (e.key === 'Enter' || e.key === 'Tab') {
+                e.preventDefault();
+                activateSkill(filteredSkills[skillMenuIndex]);
+              } else if (e.key === 'Escape') {
+                setShowSkillMenu(false);
+              }
+            }}
             style={{
               flex:          1,
               background:    'var(--color-bg-raised)',
