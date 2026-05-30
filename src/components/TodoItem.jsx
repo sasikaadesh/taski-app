@@ -122,7 +122,7 @@ export default function TodoItem({ todo, onToggle, onDelete }) {
                 }}
               >
                 <Clock size={11} aria-hidden="true" />
-                {todo.time}
+                {todo.time}{todo.endTime ? ` — ${todo.endTime}` : ''}
               </span>
             )}
           </div>

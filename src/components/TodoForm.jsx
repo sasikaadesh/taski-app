@@ -1,4 +1,4 @@
-// TodoForm — input form for creating a new todo with title, date, and time.
+// TodoForm — input form for creating a new todo with title, date, start time, and end time.
 // Conflict check runs BEFORE the todo is added to the calendar so the newly
 // created event can never be mistaken for a pre-existing conflict.
 
@@ -8,10 +8,6 @@ import { getCalendarEvents } from '../lib/googleCalendar';
 
 // ── Conflict detection ────────────────────────────────────────────────────────
 
-/**
- * Format an ISO date-time string into "H:MM AM/PM" for display.
- * Falls back to the raw string if parsing fails.
- */
 function fmtTime(iso) {
   try {
     return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -21,96 +17,110 @@ function fmtTime(iso) {
 }
 
 /**
- * Fetch existing events for `date` (YYYY-MM-DD) and return the first one whose
- * start time falls within ±30 minutes of `time` (HH:MM).
- * Returns null if there is no overlap or if the calendar fetch fails.
- *
- * This deliberately does NOT include the event being created — it is called
- * BEFORE we write anything to Google Calendar.
+ * Fetch existing events for `date` and return the first one that overlaps with
+ * the interval [startTime, endTime] (HH:MM). If endTime is omitted, the new
+ * event is treated as 1 hour long for overlap purposes.
+ * Returns null on no overlap or calendar fetch failure.
  */
-async function findConflict(date, time) {
+async function findConflict(date, startTime, endTime) {
   let events;
   try {
     events = await getCalendarEvents(date);
   } catch {
-    // User cancelled sign-in or calendar unreachable — treat as no conflict
-    // so we don't block the user from adding their task.
     return null;
   }
 
-  if (!events.length || !time) return null;
+  if (!events.length || !startTime) return null;
 
-  const [h, m]         = time.split(':').map(Number);
-  const selectedMins   = h * 60 + m;
-  const WINDOW_MINS    = 30;
+  const toMins = (hhmm) => {
+    const [h, m] = hhmm.split(':').map(Number);
+    return h * 60 + m;
+  };
+
+  const newStart = toMins(startTime);
+  const newEnd   = endTime ? toMins(endTime) : newStart + 60;
 
   return (
     events.find((ev) => {
-      if (ev.allDay || !ev.start) return false;
-      const evDate     = new Date(ev.start);
-      const evMins     = evDate.getHours() * 60 + evDate.getMinutes();
-      return Math.abs(evMins - selectedMins) <= WINDOW_MINS;
+      if (ev.allDay || !ev.start || !ev.end) return false;
+      const evStart = toMins(new Date(ev.start).toTimeString().slice(0, 5));
+      const evEnd   = toMins(new Date(ev.end).toTimeString().slice(0, 5));
+      // Standard interval overlap: [newStart, newEnd) ∩ [evStart, evEnd)
+      return newStart < evEnd && evStart < newEnd;
     }) ?? null
   );
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-/**
- * Props:
- *   onAdd(todo: { id, title, date, time, done }) — called only after any
- *   conflict has been resolved (either dismissed or overridden by the user).
- */
 export default function TodoForm({ onAdd }) {
-  const [title,    setTitle]    = useState('');
-  const [date,     setDate]     = useState('');
-  const [time,     setTime]     = useState('');
-  const [checking, setChecking] = useState(false);
-  // conflict: null | { event: { summary, start }, pendingTodo }
-  const [conflict, setConflict] = useState(null);
+  const [title,        setTitle]        = useState('');
+  const [date,         setDate]         = useState('');
+  const [time,         setTime]         = useState('');
+  const [endTime,      setEndTime]      = useState('');
+  const [endTimeError, setEndTimeError] = useState('');
+  const [checking,     setChecking]     = useState(false);
+  const [conflict,     setConflict]     = useState(null);
 
   function resetForm() {
     setTitle('');
     setDate('');
     setTime('');
+    setEndTime('');
+    setEndTimeError('');
     setConflict(null);
   }
 
-  // Called when the user submits the form
+  function handleStartTimeChange(e) {
+    const newStart = e.target.value;
+    setTime(newStart);
+    // If end time now precedes the new start time, clear end time
+    if (endTime && newStart && endTime <= newStart) {
+      setEndTime('');
+      setEndTimeError('END TIME MUST BE AFTER START TIME');
+    }
+  }
+
+  function handleEndTimeChange(e) {
+    const newEnd = e.target.value;
+    setEndTime(newEnd);
+    if (newEnd && time && newEnd <= time) {
+      setEndTimeError('END TIME MUST BE AFTER START TIME');
+    } else {
+      setEndTimeError('');
+    }
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     const trimmed = title.trim();
-    if (!trimmed || checking || conflict) return;
+    if (!trimmed || checking || conflict || endTimeError) return;
 
     const todo = {
-      id:    crypto.randomUUID(),
-      title: trimmed,
+      id:      crypto.randomUUID(),
+      title:   trimmed,
       date,
       time,
-      done:  false,
+      endTime: endTime || null,
+      done:    false,
     };
 
-    // No time set → conflict detection is not meaningful → add straight away
     if (!date || !time) {
       onAdd(todo);
       resetForm();
       return;
     }
 
-    // ── Check for conflicts BEFORE writing anything to Google Calendar ────────
     setChecking(true);
     try {
-      const conflictEvent = await findConflict(date, time);
+      const conflictEvent = await findConflict(date, time, endTime || null);
       if (conflictEvent) {
-        // Pause: show the conflict UI and wait for the user's decision
         setConflict({ event: conflictEvent, pendingTodo: todo });
       } else {
-        // No conflict — proceed silently
         onAdd(todo);
         resetForm();
       }
     } catch {
-      // Unexpected error — don't block the user; add without a calendar check
       onAdd(todo);
       resetForm();
     } finally {
@@ -118,26 +128,23 @@ export default function TodoForm({ onAdd }) {
     }
   }
 
-  // "Change time" — clear the time field and let the user pick another
   function handleChangeTime() {
     setTime('');
+    setEndTime('');
+    setEndTimeError('');
     setConflict(null);
-    // Focus the time input after state settles
     setTimeout(() => document.getElementById('todo-time')?.focus(), 50);
   }
 
-  // "Add anyway" — user accepts the overlap
   function handleAddAnyway() {
     if (!conflict) return;
     onAdd(conflict.pendingTodo);
     resetForm();
   }
 
-  // Form is locked while checking or while waiting for a conflict decision
   const isLocked  = checking || conflict !== null;
-  const canSubmit = Boolean(title.trim()) && !isLocked;
+  const canSubmit = Boolean(title.trim()) && !isLocked && !endTimeError;
 
-  /* ── Shared styles ── */
   const inputBase = {
     background:    'var(--color-bg-raised)',
     border:        '1px solid var(--color-border)',
@@ -157,7 +164,7 @@ export default function TodoForm({ onAdd }) {
 
   const labelStyle = {
     fontFamily:    "'Rajdhani', sans-serif",
-    fontSize:      '12px',
+    fontSize:      '11px',
     fontWeight:    500,
     letterSpacing: '0.08em',
     textTransform: 'uppercase',
@@ -167,7 +174,6 @@ export default function TodoForm({ onAdd }) {
     gap:           '4px',
   };
 
-  /* ── Shared focus/blur handlers (skipped while locked) ── */
   const onFocusInput = (e) => {
     if (isLocked) return;
     e.target.style.borderColor = 'var(--color-border-bright)';
@@ -230,18 +236,37 @@ export default function TodoForm({ onAdd }) {
           />
         </div>
 
-        {/* Date + Time row */}
+        {/* Date row */}
+        <div className="flex flex-col gap-1.5">
+          <label style={labelStyle} htmlFor="todo-date">
+            <Calendar size={11} aria-hidden="true" />
+            Date
+          </label>
+          <input
+            id="todo-date"
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            disabled={isLocked}
+            style={inputBase}
+            onFocus={onFocusInput}
+            onBlur={onBlurInput}
+          />
+        </div>
+
+        {/* Start Time + End Time row */}
         <div className="flex gap-3">
-          <div className="flex flex-col gap-1.5 flex-1">
-            <label style={labelStyle} htmlFor="todo-date">
-              <Calendar size={12} aria-hidden="true" />
-              Date
+          {/* Start time picker */}
+          <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+            <label style={labelStyle} htmlFor="todo-time">
+              <Clock size={11} aria-hidden="true" />
+              Start Time
             </label>
             <input
-              id="todo-date"
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
+              id="todo-time"
+              type="time"
+              value={time}
+              onChange={handleStartTimeChange}
               disabled={isLocked}
               style={inputBase}
               onFocus={onFocusInput}
@@ -249,21 +274,50 @@ export default function TodoForm({ onAdd }) {
             />
           </div>
 
-          <div className="flex flex-col gap-1.5 flex-1">
-            <label style={labelStyle} htmlFor="todo-time">
-              <Clock size={12} aria-hidden="true" />
-              Time
+          {/* End time picker */}
+          <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+            <label style={labelStyle} htmlFor="todo-end-time">
+              <Clock size={11} aria-hidden="true" />
+              End Time
             </label>
             <input
-              id="todo-time"
+              id="todo-end-time"
               type="time"
-              value={time}
-              onChange={(e) => setTime(e.target.value)}
+              value={endTime}
+              onChange={handleEndTimeChange}
               disabled={isLocked}
-              style={inputBase}
-              onFocus={onFocusInput}
-              onBlur={onBlurInput}
+              style={{
+                ...inputBase,
+                borderColor: endTimeError ? 'var(--color-danger)' : undefined,
+              }}
+              onFocus={(e) => {
+                if (isLocked) return;
+                e.target.style.borderColor = endTimeError
+                  ? 'var(--color-danger)'
+                  : 'var(--color-border-bright)';
+                e.target.style.boxShadow = '0 0 0 3px var(--color-neon-cyan-glow), 0 0 15px rgba(0,212,255,0.2)';
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = endTimeError
+                  ? 'var(--color-danger)'
+                  : 'var(--color-border)';
+                e.target.style.boxShadow = 'none';
+              }}
             />
+            {endTimeError && (
+              <span
+                style={{
+                  fontFamily:    "'Rajdhani', sans-serif",
+                  fontSize:      '11px',
+                  color:         'var(--color-danger)',
+                  letterSpacing: '0.04em',
+                  lineHeight:    1.3,
+                  marginTop:     '2px',
+                }}
+              >
+                {endTimeError}
+              </span>
+            )}
           </div>
         </div>
 
@@ -317,7 +371,7 @@ export default function TodoForm({ onAdd }) {
         </button>
       </form>
 
-      {/* ── Conflict banner — shown BELOW the form when a clash is found ─── */}
+      {/* ── Conflict banner ── */}
       {conflict && (
         <div
           style={{
@@ -329,7 +383,6 @@ export default function TodoForm({ onAdd }) {
             padding:      '16px',
           }}
         >
-          {/* Warning message */}
           <div className="flex items-start gap-3 mb-4">
             <AlertTriangle
               size={16}
@@ -356,9 +409,7 @@ export default function TodoForm({ onAdd }) {
             </p>
           </div>
 
-          {/* Action buttons */}
           <div className="flex gap-3">
-            {/* Change time — primary action */}
             <button
               onClick={handleChangeTime}
               style={{
@@ -388,7 +439,6 @@ export default function TodoForm({ onAdd }) {
               Change time
             </button>
 
-            {/* Add anyway — secondary action */}
             <button
               onClick={handleAddAnyway}
               style={{

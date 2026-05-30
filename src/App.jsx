@@ -13,6 +13,8 @@ import StartupOverlay   from './components/StartupOverlay';
 import DateTimeGadget   from './components/DateTimeGadget';
 import LocationGadget   from './components/LocationGadget';
 import MusicControls    from './components/MusicControls';
+import HelpModal        from './components/HelpModal';
+import { HelpCircle }   from 'lucide-react';
 import { createCalendarEvent } from './lib/googleCalendar';
 import {
   startAmbient,
@@ -137,6 +139,9 @@ export default function App() {
     setAmbientVolume(val / 100);
   }
 
+  // ── Help modal ────────────────────────────────────────────────────────────
+  const [helpModalOpen, setHelpModalOpen] = useState(false);
+
   // ── Responsive: mobile todo sidebar ──────────────────────────────────────
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -187,56 +192,62 @@ export default function App() {
               background:   'rgba(0,212,255,0.02)',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              {/* Tron T icon */}
-              <div
-                style={{
-                  width:          '32px',
-                  height:         '32px',
-                  border:         '1px solid #00d4ff',
-                  borderRadius:   '3px',
-                  display:        'flex',
-                  alignItems:     'center',
-                  justifyContent: 'center',
-                  boxShadow:      '0 0 14px rgba(0,212,255,0.3), inset 0 0 10px rgba(0,212,255,0.05)',
-                  flexShrink:     0,
-                }}
-              >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <rect x="1" y="2" width="14" height="2" fill="#00d4ff"/>
-                  <rect x="6.5" y="4" width="3" height="10" fill="#00d4ff"/>
-                </svg>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              {/* Logo + title */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                {/* Tron T icon */}
+                <div
+                  style={{
+                    width:          '32px',
+                    height:         '32px',
+                    border:         '1px solid #00d4ff',
+                    borderRadius:   '3px',
+                    display:        'flex',
+                    alignItems:     'center',
+                    justifyContent: 'center',
+                    boxShadow:      '0 0 14px rgba(0,212,255,0.3), inset 0 0 10px rgba(0,212,255,0.05)',
+                    flexShrink:     0,
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="1" y="2" width="14" height="2" fill="#00d4ff"/>
+                    <rect x="6.5" y="4" width="3" height="10" fill="#00d4ff"/>
+                  </svg>
+                </div>
+
+                <div>
+                  <h1
+                    style={{
+                      fontFamily:    "'Orbitron', sans-serif",
+                      fontSize:      '22px',
+                      fontWeight:    700,
+                      letterSpacing: '0.1em',
+                      color:         '#00d4ff',
+                      textShadow:    '0 0 20px rgba(0,212,255,0.8)',
+                      margin:        0,
+                      lineHeight:    1,
+                    }}
+                  >
+                    TASKI
+                  </h1>
+                  <p
+                    style={{
+                      fontFamily:    "'Rajdhani', sans-serif",
+                      fontSize:      '10px',
+                      letterSpacing: '0.12em',
+                      color:         'rgba(0,212,255,0.45)',
+                      textTransform: 'uppercase',
+                      margin:        '3px 0 0',
+                      lineHeight:    1,
+                    }}
+                  >
+                    Smart Scheduling
+                  </p>
+                </div>
               </div>
 
-              <div>
-                <h1
-                  style={{
-                    fontFamily:    "'Orbitron', sans-serif",
-                    fontSize:      '22px',
-                    fontWeight:    700,
-                    letterSpacing: '0.1em',
-                    color:         '#00d4ff',
-                    textShadow:    '0 0 20px rgba(0,212,255,0.8)',
-                    margin:        0,
-                    lineHeight:    1,
-                  }}
-                >
-                  TASKI
-                </h1>
-                <p
-                  style={{
-                    fontFamily:    "'Rajdhani', sans-serif",
-                    fontSize:      '10px',
-                    letterSpacing: '0.12em',
-                    color:         'rgba(0,212,255,0.45)',
-                    textTransform: 'uppercase',
-                    margin:        '3px 0 0',
-                    lineHeight:    1,
-                  }}
-                >
-                  Smart Scheduling
-                </p>
-              </div>
+              {/* Help button */}
+              <HelpButton onClick={() => setHelpModalOpen(true)} />
             </div>
 
             {/* Stats row */}
@@ -567,6 +578,67 @@ export default function App() {
           .sidebar-backdrop { display: block !important; }
         }
       `}</style>
+
+      {/* Help modal — rendered at root level so it overlays everything */}
+      <HelpModal isOpen={helpModalOpen} onClose={() => setHelpModalOpen(false)} />
     </>
+  );
+}
+
+// ── Help icon button ──────────────────────────────────────────────────────────
+
+function HelpButton({ onClick }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+      {hovered && (
+        <span
+          style={{
+            position:      'absolute',
+            bottom:        '100%',
+            left:          '50%',
+            transform:     'translateX(-50%)',
+            marginBottom:  '6px',
+            fontFamily:    "'Rajdhani', sans-serif",
+            fontSize:      '10px',
+            fontWeight:    600,
+            letterSpacing: '0.1em',
+            textTransform: 'uppercase',
+            color:         'var(--color-neon-cyan)',
+            background:    'var(--color-bg-overlay)',
+            border:        '1px solid var(--color-border)',
+            borderRadius:  '3px',
+            padding:       '2px 8px',
+            whiteSpace:    'nowrap',
+            pointerEvents: 'none',
+          }}
+        >
+          HELP
+        </span>
+      )}
+      <button
+        onClick={onClick}
+        aria-label="Open help"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          width:        '32px',
+          height:       '32px',
+          borderRadius: '50%',
+          border:       '1px solid var(--color-border)',
+          background:   hovered ? 'var(--color-bg-raised)' : 'transparent',
+          color:        hovered ? 'var(--color-neon-cyan)' : 'var(--color-text-secondary)',
+          display:      'flex',
+          alignItems:   'center',
+          justifyContent: 'center',
+          cursor:       'pointer',
+          boxShadow:    hovered ? '0 0 12px rgba(0,212,255,0.5)' : 'none',
+          transition:   'all 200ms ease-in-out',
+          flexShrink:   0,
+        }}
+      >
+        <HelpCircle size={16} aria-hidden="true" />
+      </button>
+    </div>
   );
 }

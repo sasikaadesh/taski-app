@@ -241,13 +241,15 @@ export async function getCalendarEvents(date) {
  * Returns the created event object from the API (includes `id` and `htmlLink`).
  * Throws if `todo.date` is missing or the API call fails.
  */
-export async function createCalendarEvent({ title, date, time }) {
+export async function createCalendarEvent({ title, date, time, endTime }) {
   if (!date) throw new Error('Cannot create a calendar event without a date.');
 
   let eventBody;
   if (time) {
     const startDt = new Date(`${date}T${time}:00`);
-    const endDt   = new Date(startDt.getTime() + 60 * 60 * 1000); // +1 hour
+    const endDt   = endTime
+      ? new Date(`${date}T${endTime}:00`)
+      : new Date(startDt.getTime() + 60 * 60 * 1000); // +1 hour default
     eventBody = {
       summary: title,
       start: { dateTime: startDt.toISOString() },

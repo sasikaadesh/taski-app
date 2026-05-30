@@ -1052,6 +1052,7 @@ export default function ChatBot({
       <div
         style={{
           flex:          1,
+          minHeight:     0,
           overflowY:     'auto',
           padding:       '16px',
           display:       'flex',
@@ -1279,10 +1280,12 @@ export default function ChatBot({
       <form
         onSubmit={handleSend}
         style={{
-          padding:    '12px 14px',
-          borderTop:  '1px solid rgba(0,212,255,0.12)',
-          flexShrink: 0,
-          background: 'rgba(0,0,0,0.2)',
+          padding:       '12px 14px 16px',
+          borderTop:     '1px solid rgba(0,212,255,0.12)',
+          flexShrink:    0,
+          minHeight:     '60px',
+          background:    'rgba(0,0,0,0.2)',
+          position:      'relative',
         }}
       >
         {/* Listening indicator */}
