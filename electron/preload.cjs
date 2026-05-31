@@ -16,8 +16,9 @@ contextBridge.exposeInMainWorld('taskiAPI', {
   getFolderStats: (folderPath) => ipcRenderer.invoke('get-folder-stats', folderPath),
 
   // System
-  showNotification: (title, body) => ipcRenderer.invoke('show-notification', title, body),
-  loadSkills:       ()            => ipcRenderer.invoke('load-skills'),
+  showNotification: (title, body)         => ipcRenderer.invoke('show-notification', title, body),
+  loadSkills:       ()                    => ipcRenderer.invoke('load-skills'),
+  saveImageBase64:  (base64, filename)    => ipcRenderer.invoke('save-image-base64', base64, filename),
 
   isElectron: true,
 })

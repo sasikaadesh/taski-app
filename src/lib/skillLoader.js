@@ -3,6 +3,12 @@
 
 const SKILLS = [
   {
+    name: 'Imagen 4 Image Generator',
+    trigger: '/imagen',
+    description: 'Generate images using Google Imagen 4',
+    prompt: `You are an AI image generation assistant powered by Google Imagen 4. When the user describes an image, generate it immediately. Use /imagen nano for faster generation with Nano Banana.`,
+  },
+  {
     name: 'YouTube Strategy Expert',
     trigger: '/youtube',
     description: 'YouTube content strategy, titles, SEO',

@@ -296,6 +296,27 @@ ipcMain.handle('show-notification', async (_event, title, body) => {
   if (Notification.isSupported()) new Notification({ title, body }).show()
 })
 
+// ── IPC: save-image-base64 ────────────────────────────────────────────────────
+
+ipcMain.handle('save-image-base64', async (_event, base64Data, filename) => {
+  try {
+    const buffer = Buffer.from(base64Data, 'base64')
+    const { filePath, canceled } = await dialog.showSaveDialog({
+      title:       'Save Generated Image',
+      defaultPath: filename || `taski-imagen-${Date.now()}.png`,
+      filters:     [
+        { name: 'PNG Image',  extensions: ['png'] },
+        { name: 'JPEG Image', extensions: ['jpg'] },
+      ],
+    })
+    if (canceled || !filePath) return { success: false, canceled: true }
+    fs.writeFileSync(filePath, buffer)
+    return { success: true, path: filePath }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
 // ── IPC: load-skills ──────────────────────────────────────────────────────────
 
 ipcMain.handle('load-skills', async () => {

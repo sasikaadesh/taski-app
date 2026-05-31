@@ -7,6 +7,8 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Loader2, Mic } from 'lucide-react';
 import { callClaude, CHATBOT_SYSTEM, EMAIL_DRAFT_SYSTEM } from '../lib/claude';
 import { getAllSkills, getSkill } from '../lib/skillLoader';
+import { generateWithImagen, enhanceImagePrompt, detectAspectRatio, IMAGEN_MODELS } from '../lib/imagenGenerator';
+import ImagenResultCard from './ImagenResultCard';
 import { analyzeAndPlanOrganization, groupByFolder } from '../lib/folderOrganizer';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import {
@@ -388,6 +390,68 @@ function detectVoiceSkill(text) {
   return null;
 }
 
+// ── Image generation detection ────────────────────────────────────────────────
+
+const IMAGE_SLASH_TRIGGERS = new Set(['/imagen', '/image', '/draw', '/generate', '/img']);
+
+const IMAGE_NL_PATTERNS = [
+  /^generate\s+(?:an?\s+)?image\s+of\b/i,
+  /^create\s+(?:an?\s+)?(?:picture|image|photo)\s+of\b/i,
+  /^draw\s+me\s+\S/i,
+  /^draw\s+(?!me\b)\S/i,
+  /^make\s+(?:an?\s+)?(?:image|picture|photo)\s+of\b/i,
+  /^show\s+me\s+(?:an?\s+)?(?:picture|image|photo)\s+of\b/i,
+  /^imagine\s+\S/i,
+  /^visualize\s+\S/i,
+  /^use\s+imagen\s+(?:to\s+)?\S/i,
+];
+
+const MODEL_NANO_WORDS  = new Set(['nano', 'fast', 'banana', 'quick']);
+const MODEL_HD_WORDS    = new Set(['quality', 'best', 'hd', 'high', 'imagen4']);
+
+// Returns { prompt, model } or null. activeSkillTrigger lets imagen-mode pass through.
+function detectImageRequest(text, activeSkillTrigger) {
+  const trimmed = text.trim();
+  const lower   = trimmed.toLowerCase();
+  const words   = lower.split(/\s+/);
+  const first   = words[0];
+
+  // Natural language (always checked, regardless of active skill)
+  for (const re of IMAGE_NL_PATTERNS) {
+    if (re.test(trimmed)) return { prompt: trimmed, model: IMAGEN_MODELS.NANO_BANANA.id };
+  }
+
+  // Slash triggers with inline prompt text
+  if (IMAGE_SLASH_TRIGGERS.has(first)) {
+    const rest = words.slice(1);
+    if (!rest.length) {
+      // bare /imagen → only treat as image if already in imagen skill mode
+      return activeSkillTrigger === '/imagen'
+        ? null  // no prompt given yet; let skill handle it
+        : null; // activate skill (handled by branch -1)
+    }
+    let model      = IMAGEN_MODELS.NANO_BANANA.id;   // default: free tier
+    let promptSkip = 0;
+    if (MODEL_NANO_WORDS.has(rest[0])) { model = IMAGEN_MODELS.NANO_BANANA.id; promptSkip = 1; }
+    else if (MODEL_HD_WORDS.has(rest[0]))  { model = IMAGEN_MODELS.IMAGEN4.id;    promptSkip = 1; }
+
+    // Recover original-case prompt from the trimmed text
+    const afterTrigger  = trimmed.slice(first.length).trimStart();
+    const promptRaw     = promptSkip
+      ? afterTrigger.slice(rest[0].length).trimStart()
+      : afterTrigger;
+    if (!promptRaw) return null;
+    return { prompt: promptRaw, model };
+  }
+
+  // Imagen skill mode — any non-slash message generates an image
+  if (activeSkillTrigger === '/imagen' && !trimmed.startsWith('/')) {
+    return { prompt: trimmed, model: IMAGEN_MODELS.NANO_BANANA.id };
+  }
+
+  return null;
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 /**
@@ -567,6 +631,84 @@ export default function ChatBot({
     s.description.toLowerCase().includes(skillFilter)
   );
 
+  // ── Image generation handlers ─────────────────────────────────────────────
+
+  async function handleImageGeneration(prompt, modelId) {
+    const requestId = `img-${Date.now()}`;
+    setMessages((prev) => [...prev, {
+      role:    'assistant',
+      content: `Generating with ${modelId === IMAGEN_MODELS.NANO_BANANA.id ? 'Nano Banana' : 'Imagen 4'}…`,
+      meta:    { type: 'imagen-loading', requestId, model: modelId },
+    }].slice(-MAX_MESSAGES));
+
+    try {
+      const enhancedPrompt = await enhanceImagePrompt(prompt).catch(() => prompt);
+      const ratio          = detectAspectRatio(prompt);
+      const result         = await generateWithImagen(enhancedPrompt, { model: modelId, aspectRatio: ratio });
+
+      setMessages((prev) => prev.map((m) =>
+        m.meta?.requestId === requestId
+          ? {
+              role:    'assistant',
+              content: '[imagen-result]',
+              meta:    {
+                type: 'imagen-result', requestId,
+                images: result.images, prompt, enhancedPrompt,
+                model: result.model, aspectRatio: ratio,
+                fallbackUsed: result.fallbackUsed ?? false,
+              },
+            }
+          : m
+      ));
+      speakText('Your image is ready.');
+    } catch (err) {
+      setMessages((prev) => prev.map((m) =>
+        m.meta?.requestId === requestId
+          ? { role: 'assistant', content: `Image generation failed: ${err.message}`, meta: {} }
+          : m
+      ));
+      speakText('I was unable to generate that image.');
+    }
+
+    onVisualizerState?.('idle');
+  }
+
+  async function handleImageRegeneration(requestId, prompt, modelId) {
+    setMessages((prev) => prev.map((m) =>
+      m.meta?.requestId === requestId
+        ? { ...m, meta: { ...m.meta, type: 'imagen-loading', model: modelId } }
+        : m
+    ));
+
+    try {
+      const enhancedPrompt = await enhanceImagePrompt(prompt).catch(() => prompt);
+      const ratio          = detectAspectRatio(prompt);
+      const result         = await generateWithImagen(enhancedPrompt, { model: modelId, aspectRatio: ratio });
+
+      setMessages((prev) => prev.map((m) =>
+        m.meta?.requestId === requestId
+          ? {
+              role:    'assistant',
+              content: '[imagen-result]',
+              meta:    {
+                type: 'imagen-result', requestId,
+                images: result.images, prompt, enhancedPrompt,
+                model: result.model, aspectRatio: ratio,
+                fallbackUsed: result.fallbackUsed ?? false,
+              },
+            }
+          : m
+      ));
+      speakText('Your image is ready.');
+    } catch (err) {
+      setMessages((prev) => prev.map((m) =>
+        m.meta?.requestId === requestId
+          ? { ...m, content: `Regeneration failed: ${err.message}`, meta: { ...m.meta, type: 'imagen-error' } }
+          : m
+      ));
+    }
+  }
+
   // ── Email draft state handlers ────────────────────────────────────────────
 
   function handleEmailDraftChange(draftId, field, value) {
@@ -690,6 +832,19 @@ export default function ChatBot({
         }
         setLoading(false);
         onVisualizerState?.('idle');
+        return;
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // BRANCH -0.5 — Image generation (/imagen, /draw, natural language)
+    // ════════════════════════════════════════════════════════════════════════
+    {
+      const imgReq = detectImageRequest(text, activeSkill?.trigger);
+      if (imgReq) {
+        setLoading(false); // ImagenResultCard shows its own loading state
+        onVisualizerState?.('processing');
+        await handleImageGeneration(imgReq.prompt, imgReq.model);
         return;
       }
     }
@@ -1323,6 +1478,26 @@ export default function ChatBot({
                 }}
               >
                 {msg.content}
+              </div>
+
+            ) : msg.meta?.type === 'imagen-loading' ? (
+              /* ── Imagen loading skeleton ── */
+              <div style={{ width: '100%' }}>
+                <ImagenResultCard loading model={msg.meta.model} />
+              </div>
+
+            ) : msg.meta?.type === 'imagen-result' ? (
+              /* ── Imagen result card ── */
+              <div style={{ width: '100%' }}>
+                <ImagenResultCard
+                  images={msg.meta.images}
+                  prompt={msg.meta.prompt}
+                  enhancedPrompt={msg.meta.enhancedPrompt}
+                  model={msg.meta.model}
+                  aspectRatio={msg.meta.aspectRatio}
+                  fallbackUsed={msg.meta.fallbackUsed ?? false}
+                  onRegenerate={(p, m) => handleImageRegeneration(msg.meta.requestId, p, m)}
+                />
               </div>
 
             ) : (

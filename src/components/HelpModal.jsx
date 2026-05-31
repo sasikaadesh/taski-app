@@ -71,6 +71,24 @@ const SECTIONS = [
     ],
   },
   {
+    title: 'IMAGE GENERATION',
+    items: [
+      'Type /imagen followed by your description to generate images — FREE on Google AI free tier',
+      'Default model: Nano Banana (gemini-2.5-flash-image) — free, up to 500 images per day',
+      'Nano Banana is the default and works on any Google AI free account',
+      'Imagen 4 (paid) — highest quality: /imagen quality a detailed portrait — requires Google AI Pro',
+      'If Imagen 4 billing is not enabled, TASKI automatically falls back to Nano Banana',
+      'TASKI enhances your prompt with Claude AI for richer, more detailed results',
+      'Aspect ratio is auto-detected from your words: landscape, portrait, square, or photo',
+      'Click Regenerate to get a new variation, Edit to refine the prompt, or + Variation for more',
+      'Save images directly to your computer with the per-image save button',
+      'Natural language also works: "Generate an image of a sunset over the ocean"',
+      'Voice: "Draw me a futuristic city" or "Create a picture of a mountain lake"',
+      'Example: /imagen a Sri Lankan tea plantation at golden hour, landscape, golden tones',
+      'Example: /imagen portrait a professional headshot background, studio lighting',
+    ],
+  },
+  {
     title: 'SLASH COMMAND SKILLS',
     items: [
       'Type / in the chat to see all available skills and filter by name',
