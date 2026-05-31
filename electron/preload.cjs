@@ -15,6 +15,19 @@ contextBridge.exposeInMainWorld('taskiAPI', {
   createFolder:   (folderPath) => ipcRenderer.invoke('create-folder',    folderPath),
   getFolderStats: (folderPath) => ipcRenderer.invoke('get-folder-stats', folderPath),
 
+  // Todos persistence
+  loadTodos: ()       => ipcRenderer.invoke('load-todos'),
+  saveTodos: (todos)  => ipcRenderer.invoke('save-todos', todos),
+
+  // Quick todos persistence
+  quickTodosLoad: ()        => ipcRenderer.invoke('quicktodos-load'),
+  quickTodosSave: (todos)   => ipcRenderer.invoke('quicktodos-save', todos),
+
+  // Chat history persistence
+  chatsLoad:       ()                    => ipcRenderer.invoke('chats-load'),
+  chatsSave:       (sessions)            => ipcRenderer.invoke('chats-save', sessions),
+  chatsExportTxt:  (sessionId, text)     => ipcRenderer.invoke('chats-export-txt', sessionId, text),
+
   // System
   showNotification: (title, body)         => ipcRenderer.invoke('show-notification', title, body),
   loadSkills:       ()                    => ipcRenderer.invoke('load-skills'),

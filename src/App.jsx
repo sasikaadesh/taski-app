@@ -1,19 +1,21 @@
 // App — root layout: three-zone Jarvis interface.
-// LEFT: TASKI branding + todo form + todo list.
+// LEFT: TASKI branding + accordion sections (add task, calendar tasks, quick todos, file organizer).
 // CENTER: JarvisVisualizer animated SVG.
 // RIGHT: ChatBot full-height panel.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import TodoForm        from './components/TodoForm';
-import TodoList        from './components/TodoList';
-import ChatBot         from './components/ChatBot';
-import FolderOrganizer from './components/FolderOrganizer';
+import TodoForm         from './components/TodoForm';
+import TodoList         from './components/TodoList';
+import ChatBot          from './components/ChatBot';
+import FolderOrganizer  from './components/FolderOrganizer';
 import JarvisVisualizer from './components/JarvisVisualizer';
 import StartupOverlay   from './components/StartupOverlay';
 import DateTimeGadget   from './components/DateTimeGadget';
 import LocationGadget   from './components/LocationGadget';
 import MusicControls    from './components/MusicControls';
 import HelpModal        from './components/HelpModal';
+import AccordionSection from './components/AccordionSection';
+import QuickTodoList    from './components/QuickTodoList';
 import { HelpCircle }   from 'lucide-react';
 import { createCalendarEvent } from './lib/googleCalendar';
 import {
@@ -28,7 +30,7 @@ import {
 const STORAGE_KEY    = 'taski-todos';
 const STARTUP_FLAG   = 'taski-startup-done';
 
-function loadTodos() {
+function loadTodosSync() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : [];
@@ -37,10 +39,29 @@ function loadTodos() {
 
 export default function App() {
   // ── Todos ─────────────────────────────────────────────────────────────────
-  const [todos, setTodos] = useState(loadTodos);
+  const [todos, setTodos] = useState(loadTodosSync);
+  const todosReady = useRef(false);
 
+  // On mount: load from file (Electron) and mark ready
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(todos));
+    async function init() {
+      if (window.taskiAPI?.isElectron) {
+        const fileTodos = await window.taskiAPI.loadTodos();
+        setTodos(fileTodos);
+      }
+      todosReady.current = true;
+    }
+    init();
+  }, []);
+
+  // Persist todos whenever they change (after initial load)
+  useEffect(() => {
+    if (!todosReady.current) return;
+    if (window.taskiAPI?.isElectron) {
+      window.taskiAPI.saveTodos(todos);
+    } else {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(todos));
+    }
   }, [todos]);
 
   function handleAdd(todo) {
@@ -68,6 +89,9 @@ export default function App() {
 
   const pending   = todos.filter((t) => !t.done);
   const completed = todos.filter((t) => t.done);
+
+  // Quick todo count for accordion badge
+  const [quickTodoCount, setQuickTodoCount] = useState(0);
 
   // ── Jarvis state ──────────────────────────────────────────────────────────
   const [visualizerState, setVisualizerState] = useState('idle');
@@ -289,99 +313,103 @@ export default function App() {
             </div>
           </div>
 
-          {/* Scrollable content: form + list */}
+          {/* Scrollable accordion sections */}
           <div
+            className="left-panel-scroll"
             style={{
-              flex:       1,
-              overflowY:  'auto',
-              padding:    '20px 20px 24px',
-              display:    'flex',
+              flex:          1,
+              overflowY:     'auto',
+              padding:       '12px 14px 24px',
+              display:       'flex',
               flexDirection: 'column',
-              gap:        '20px',
             }}
           >
-            {/* Todo form */}
-            <TodoForm onAdd={handleAdd} />
+            {/* Section 1: Add a Task */}
+            <AccordionSection title="ADD A TASK" icon="📅" defaultOpen={false} storageKey="add-task">
+              <TodoForm onAdd={handleAdd} />
+            </AccordionSection>
 
-            {/* Pending list */}
-            {pending.length > 0 && (
-              <section>
-                <h2
-                  style={{
+            {/* Section 2: Calendar Tasks */}
+            <AccordionSection
+              title="CALENDAR TASKS"
+              icon="🗓"
+              badge={pending.length}
+              defaultOpen={false}
+              storageKey="calendar-tasks"
+            >
+              {pending.length > 0 && (
+                <section style={{ marginBottom: completed.length > 0 ? '12px' : 0 }}>
+                  <h2 style={{
                     fontFamily:    "'Rajdhani', sans-serif",
                     fontSize:      '10px',
                     fontWeight:    500,
                     letterSpacing: '0.14em',
                     textTransform: 'uppercase',
                     color:         'rgba(74,155,190,0.7)',
-                    marginBottom:  '10px',
-                    margin:        '0 0 10px',
-                  }}
-                >
-                  Pending · {pending.length}
-                </h2>
-                <TodoList todos={pending} onToggle={handleToggle} onDelete={handleDelete} />
-              </section>
-            )}
-
-            {/* Completed list */}
-            {completed.length > 0 && (
-              <section>
-                <h2
-                  style={{
+                    margin:        '0 0 8px',
+                  }}>
+                    Pending · {pending.length}
+                  </h2>
+                  <TodoList todos={pending} onToggle={handleToggle} onDelete={handleDelete} />
+                </section>
+              )}
+              {completed.length > 0 && (
+                <section>
+                  <h2 style={{
                     fontFamily:    "'Rajdhani', sans-serif",
                     fontSize:      '10px',
                     fontWeight:    500,
                     letterSpacing: '0.14em',
                     textTransform: 'uppercase',
                     color:         'rgba(74,155,190,0.7)',
-                    margin:        '0 0 10px',
-                  }}
-                >
-                  Completed · {completed.length}
-                </h2>
-                <TodoList todos={completed} onToggle={handleToggle} onDelete={handleDelete} />
-              </section>
-            )}
-
-            {todos.length === 0 && (
-              <div
-                style={{
-                  display:        'flex',
-                  flexDirection:  'column',
-                  alignItems:     'center',
-                  justifyContent: 'center',
-                  paddingTop:     '40px',
-                  gap:            '12px',
-                }}
-              >
-                <svg width="44" height="44" viewBox="0 0 44 44" fill="none" aria-hidden="true">
-                  <rect x="1" y="1" width="42" height="42" rx="3" stroke="rgba(0,212,255,0.15)" strokeWidth="1"/>
-                  <rect x="7" y="13" width="30" height="1" fill="rgba(0,212,255,0.12)"/>
-                  <rect x="7" y="21" width="30" height="1" fill="rgba(0,212,255,0.12)"/>
-                  <rect x="7" y="29" width="30" height="1" fill="rgba(0,212,255,0.12)"/>
-                  <rect x="7" y="11" width="3" height="3" fill="rgba(0,212,255,0.25)"/>
-                  <rect x="7" y="19" width="3" height="3" fill="rgba(0,212,255,0.25)"/>
-                  <rect x="7" y="27" width="3" height="3" fill="rgba(0,212,255,0.25)"/>
-                </svg>
-                <p
-                  style={{
+                    margin:        '0 0 8px',
+                  }}>
+                    Completed · {completed.length}
+                  </h2>
+                  <TodoList todos={completed} onToggle={handleToggle} onDelete={handleDelete} />
+                </section>
+              )}
+              {todos.length === 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '20px 0', gap: '10px' }}>
+                  <svg width="36" height="36" viewBox="0 0 44 44" fill="none" aria-hidden="true">
+                    <rect x="1" y="1" width="42" height="42" rx="3" stroke="rgba(0,212,255,0.15)" strokeWidth="1"/>
+                    <rect x="7" y="13" width="30" height="1" fill="rgba(0,212,255,0.12)"/>
+                    <rect x="7" y="21" width="30" height="1" fill="rgba(0,212,255,0.12)"/>
+                    <rect x="7" y="29" width="30" height="1" fill="rgba(0,212,255,0.12)"/>
+                    <rect x="7" y="11" width="3" height="3" fill="rgba(0,212,255,0.25)"/>
+                    <rect x="7" y="19" width="3" height="3" fill="rgba(0,212,255,0.25)"/>
+                    <rect x="7" y="27" width="3" height="3" fill="rgba(0,212,255,0.25)"/>
+                  </svg>
+                  <p style={{
                     fontFamily:    "'Rajdhani', sans-serif",
-                    fontSize:      '12px',
+                    fontSize:      '11px',
                     letterSpacing: '0.08em',
                     textTransform: 'uppercase',
                     color:         'rgba(30,77,107,0.9)',
                     margin:        0,
                     textAlign:     'center',
-                  }}
-                >
-                  No tasks — add one above
-                </p>
-              </div>
-            )}
+                  }}>
+                    No calendar tasks yet
+                  </p>
+                </div>
+              )}
+            </AccordionSection>
 
-            {/* Folder organizer — visible only when running in Electron */}
-            <FolderOrganizer />
+            {/* Section 3: Quick To Do List — NEW */}
+            <AccordionSection
+              title="TO DO LIST"
+              icon="✓"
+              badge={quickTodoCount}
+              defaultOpen={true}
+              storageKey="todo-list"
+            >
+              <QuickTodoList onCountChange={setQuickTodoCount} />
+            </AccordionSection>
+
+            {/* Section 4: File Organizer */}
+            <AccordionSection title="FILE ORGANIZER" icon="📁" defaultOpen={false} storageKey="file-organizer">
+              <FolderOrganizer />
+            </AccordionSection>
           </div>
         </div>
 
@@ -489,6 +517,23 @@ export default function App() {
           />
         </div>
       </div>
+
+      {/* ── Left panel scrollbar (Tron thin style) ── */}
+      <style>{`
+        .left-panel-scroll {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(0,212,255,0.2) transparent;
+        }
+        .left-panel-scroll::-webkit-scrollbar { width: 4px; }
+        .left-panel-scroll::-webkit-scrollbar-track { background: transparent; }
+        .left-panel-scroll::-webkit-scrollbar-thumb {
+          background: rgba(0,212,255,0.2);
+          border-radius: 2px;
+        }
+        .left-panel-scroll::-webkit-scrollbar-thumb:hover {
+          background: rgba(0,212,255,0.4);
+        }
+      `}</style>
 
       {/* ── Responsive: mobile todo toggle button ── */}
       <style>{`

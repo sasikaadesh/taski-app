@@ -317,6 +317,89 @@ ipcMain.handle('save-image-base64', async (_event, base64Data, filename) => {
   }
 })
 
+// ── IPC: todos (load / save) ──────────────────────────────────────────────────
+
+const TODOS_PATH = path.join(app.getPath('documents'), 'Taski', 'todos.json')
+
+ipcMain.handle('load-todos', async () => {
+  try {
+    if (!fs.existsSync(TODOS_PATH)) return []
+    const raw = fs.readFileSync(TODOS_PATH, 'utf-8')
+    return JSON.parse(raw)
+  } catch { return [] }
+})
+
+ipcMain.handle('save-todos', async (_event, todos) => {
+  try {
+    const dir = path.dirname(TODOS_PATH)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(TODOS_PATH, JSON.stringify(todos, null, 2), 'utf-8')
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+})
+
+// ── IPC: quicktodos (load / save) ────────────────────────────────────────────
+
+const TODOS_FILE = path.join(app.getPath('documents'), 'Taski', 'quicktodos.json')
+
+ipcMain.handle('quicktodos-load', async () => {
+  try {
+    if (!fs.existsSync(TODOS_FILE)) return []
+    const raw = fs.readFileSync(TODOS_FILE, 'utf-8')
+    return JSON.parse(raw)
+  } catch (e) { return [] }
+})
+
+ipcMain.handle('quicktodos-save', async (_event, todos) => {
+  try {
+    const dir = path.dirname(TODOS_FILE)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(TODOS_FILE, JSON.stringify(todos, null, 2))
+    return { success: true }
+  } catch (e) {
+    return { success: false, error: e.message }
+  }
+})
+
+// ── IPC: chats (load / save / export) ────────────────────────────────────────
+
+const CHATS_FILE = path.join(app.getPath('documents'), 'Taski', 'chats.json')
+
+ipcMain.handle('chats-load', async () => {
+  try {
+    if (!fs.existsSync(CHATS_FILE)) return []
+    const raw = fs.readFileSync(CHATS_FILE, 'utf-8')
+    return JSON.parse(raw)
+  } catch (e) { return [] }
+})
+
+ipcMain.handle('chats-save', async (_event, sessions) => {
+  try {
+    const dir = path.dirname(CHATS_FILE)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(CHATS_FILE, JSON.stringify(sessions, null, 2))
+    return { success: true }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
+ipcMain.handle('chats-export-txt', async (_event, sessionId, text) => {
+  try {
+    const { filePath, canceled } = await dialog.showSaveDialog({
+      title:       'Export Chat',
+      defaultPath: `taski-chat-${sessionId}.txt`,
+      filters: [
+        { name: 'Text', extensions: ['txt'] },
+        { name: 'JSON', extensions: ['json'] },
+      ],
+    })
+    if (canceled || !filePath) return { canceled: true }
+    fs.writeFileSync(filePath, text)
+    return { success: true, path: filePath }
+  } catch (e) { return { success: false, error: e.message } }
+})
+
 // ── IPC: load-skills ──────────────────────────────────────────────────────────
 
 ipcMain.handle('load-skills', async () => {

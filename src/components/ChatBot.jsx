@@ -4,7 +4,7 @@
 // NEW: TTS for Claude responses, visualizer state callbacks, slash command skills.
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, Mic } from 'lucide-react';
+import { Send, Loader2, Mic, Clock } from 'lucide-react';
 import { callClaude, CHATBOT_SYSTEM, EMAIL_DRAFT_SYSTEM } from '../lib/claude';
 import { getAllSkills, getSkill } from '../lib/skillLoader';
 import { generateWithImagen, enhanceImagePrompt, detectAspectRatio, IMAGEN_MODELS } from '../lib/imagenGenerator';
@@ -19,6 +19,8 @@ import {
 } from '../lib/googleCalendar';
 import { searchEmails, formatEmailsForPrompt, sendEmail } from '../lib/gmail';
 import EmailConfirmationCard from './EmailConfirmationCard';
+import useChatHistory from '../hooks/useChatHistory';
+import ChatHistoryPanel from './ChatHistoryPanel';
 
 const MAX_MESSAGES = 10;
 
@@ -475,6 +477,13 @@ export default function ChatBot({
   const [pendingEmailContext, setPendingEmailContext] = useState(null);
   const [pendingFolderPlan,   setPendingFolderPlan]  = useState(null);
 
+  // ── Chat history ──────────────────────────────────────────────────────────
+  const chatHistory    = useChatHistory();
+  const sessionIdRef   = useRef(null);
+  const prevLoadingRef = useRef(false);
+  const [historyOpen,  setHistoryOpen]  = useState(false);
+  const [viewingPast,  setViewingPast]  = useState(null);
+
   // ── Skill state ───────────────────────────────────────────────────────────
   const [activeSkill,    setActiveSkill]    = useState(null);   // skill object or null
   const [showSkillMenu,  setShowSkillMenu]  = useState(false);  // autocomplete popup
@@ -565,6 +574,22 @@ export default function ChatBot({
     document.addEventListener('mousedown', onClickOutside);
     return () => document.removeEventListener('mousedown', onClickOutside);
   }, [showSkillMenu]);
+
+  // Start a new chat session on mount
+  useEffect(() => {
+    sessionIdRef.current = chatHistory.startNewSession();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-save after each assistant response (when loading transitions true→false)
+  useEffect(() => {
+    if (prevLoadingRef.current && !loading && messages.length > 0) {
+      const last = messages[messages.length - 1];
+      if (last?.role === 'assistant' && sessionIdRef.current) {
+        chatHistory.saveMessage(sessionIdRef.current, last, messages);
+      }
+    }
+    prevLoadingRef.current = loading;
+  }, [loading, messages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── TTS ───────────────────────────────────────────────────────────────────
 
@@ -1286,8 +1311,24 @@ export default function ChatBot({
         height:         '100%',
         background:     'var(--color-bg-muted)',
         overflow:       'hidden',
+        position:       'relative',
       }}
     >
+      {/* ── History panel (absolutely positioned overlay) ── */}
+      {historyOpen && (
+        <ChatHistoryPanel
+          sessions={chatHistory.sessions}
+          onClose={() => setHistoryOpen(false)}
+          onView={(session) => {
+            setMessages(session.messages);
+            setViewingPast(session);
+            setHistoryOpen(false);
+          }}
+          onExport={(sessionId) => chatHistory.exportSession(sessionId)}
+          onDelete={(sessionId) => chatHistory.deleteSession(sessionId)}
+        />
+      )}
+
       {/* ── Header ── */}
       <div
         style={{
@@ -1297,19 +1338,21 @@ export default function ChatBot({
           flexShrink:   0,
         }}
       >
-        <div
-          style={{
-            fontFamily:    "'Orbitron', sans-serif",
-            fontSize:      '16px',
-            fontWeight:    700,
-            letterSpacing: '0.12em',
-            color:         '#00d4ff',
-            textShadow:    '0 0 16px rgba(0,212,255,0.7)',
-            lineHeight:    1,
-          }}
-        >
-          TASKI
-        </div>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div
+              style={{
+                fontFamily:    "'Orbitron', sans-serif",
+                fontSize:      '16px',
+                fontWeight:    700,
+                letterSpacing: '0.12em',
+                color:         '#00d4ff',
+                textShadow:    '0 0 16px rgba(0,212,255,0.7)',
+                lineHeight:    1,
+              }}
+            >
+              TASKI
+            </div>
 
         {/* Skill badge / status line */}
         {activeSkill ? (
@@ -1370,6 +1413,35 @@ export default function ChatBot({
             AI ASSISTANT ONLINE
           </div>
         )}
+          </div>
+
+          {/* History icon button */}
+          <button
+            onClick={() => setHistoryOpen(true)}
+            aria-label="View chat history"
+            style={{
+              background:  'none',
+              border:      'none',
+              cursor:      'pointer',
+              color:       'var(--color-text-secondary)',
+              padding:     '4px',
+              display:     'flex',
+              alignItems:  'center',
+              flexShrink:  0,
+              transition:  'color 200ms, text-shadow 200ms',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color      = 'var(--color-neon-cyan)';
+              e.currentTarget.style.textShadow = '0 0 8px rgba(0,212,255,0.6)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color      = 'var(--color-text-secondary)';
+              e.currentTarget.style.textShadow = 'none';
+            }}
+          >
+            <Clock size={16} aria-hidden="true" />
+          </button>
+        </div>
       </div>
 
       {/* ── Messages area ── */}
@@ -1384,7 +1456,58 @@ export default function ChatBot({
           gap:           '12px',
         }}
       >
-        {messages.length === 0 && (
+        {/* Viewing past chat banner */}
+        {viewingPast && (
+          <div style={{
+            padding:      '8px 12px',
+            background:   'var(--color-neon-orange-glow)',
+            border:       '1px solid var(--color-neon-orange)',
+            borderRadius: '4px',
+            display:      'flex',
+            alignItems:   'center',
+            justifyContent: 'space-between',
+            gap:          '8px',
+            flexShrink:   0,
+          }}>
+            <div style={{
+              fontFamily:    "'Rajdhani', sans-serif",
+              fontSize:      '11px',
+              fontWeight:    600,
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+              color:         'var(--color-neon-orange)',
+            }}>
+              VIEWING PAST CHAT —{' '}
+              {new Date(viewingPast.startedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+            </div>
+            <button
+              onClick={() => {
+                setMessages([]);
+                setViewingPast(null);
+                sessionIdRef.current = chatHistory.startNewSession();
+              }}
+              style={{
+                background:    'rgba(255,107,0,0.15)',
+                border:        '1px solid var(--color-neon-orange)',
+                borderRadius:  '3px',
+                padding:       '3px 8px',
+                cursor:        'pointer',
+                color:         'var(--color-neon-orange)',
+                fontFamily:    "'Rajdhani', sans-serif",
+                fontSize:      '10px',
+                fontWeight:    600,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                whiteSpace:    'nowrap',
+                flexShrink:    0,
+              }}
+            >
+              START NEW CHAT
+            </button>
+          </div>
+        )}
+
+        {messages.length === 0 && !viewingPast && (
           <div
             style={{
               display:        'flex',

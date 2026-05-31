@@ -5,123 +5,145 @@ import { X } from 'lucide-react';
 
 const SECTIONS = [
   {
-    title: 'TASK MANAGEMENT',
+    title: 'GETTING STARTED',
     items: [
-      'Create tasks with title, date, start and end time — all saved locally',
-      'Tasks automatically added to your Google Calendar when created',
-      'Smart conflict detection — TASKI checks your existing calendar before scheduling and warns you of overlaps',
-      'Mark tasks complete or delete them anytime',
-      'Tasks persist between sessions using local storage',
+      'Taski is your personal AI assistant that connects to your Google Calendar, Gmail, and local computer files',
+      'Sign in with Google the first time you add a task — this connects your Calendar and Gmail automatically',
+      'The left panel has all your tools. Click any section header to open or close it to save space',
+      'Talk to TASKI in the chat on the right, or click the microphone to speak',
     ],
   },
   {
-    title: 'AI ASSISTANT (TASKI)',
+    title: 'ADD A TASK (Left Panel)',
     items: [
-      'Intelligent Jarvis-style AI chatbot powered by Claude claude-sonnet-4-20250514',
-      'Ask anything about your schedule, emails, tasks or files in natural language',
-      'TASKI remembers the last 10 messages for context-aware conversations',
-      'Responses spoken aloud using text-to-speech with a sophisticated AI voice',
+      'Creates a task AND adds it to your Google Calendar at the same time',
+      'Fill in the task name, pick a date, start time and end time, then click Add Task',
+      'TASKI automatically checks if you already have something at that time and warns you before adding',
+      'The task appears in both the Calendar Tasks list and your Google Calendar app',
     ],
   },
   {
-    title: 'GOOGLE CALENDAR',
+    title: 'CALENDAR TASKS (Left Panel)',
     items: [
-      'Read your real calendar events — ask "What\'s on my calendar tomorrow?"',
-      'Check availability for any date and time',
-      'Detect scheduling conflicts automatically before creating new tasks',
-      'All calendar access is read-only except when creating tasks',
+      'Shows all tasks you have added through Taski that are coming up',
+      'Tick the circle to mark a task done',
+      'Tasks here are linked to your Google Calendar',
     ],
   },
   {
-    title: 'GMAIL INTEGRATION',
+    title: 'TO DO LIST (Left Panel)',
     items: [
-      'Search emails by sender name, email address, keyword or date range',
-      'Ask "Any emails from James today?" and TASKI finds them instantly',
-      'Compose and send emails by describing what you want to say',
-      'Always shows a confirmation card before sending — never sends without your approval',
+      'A simple personal task list that is NOT connected to Google Calendar',
+      'Great for quick reminders for tomorrow or this week',
+      'Add a task name, pick Tomorrow or This Week, set an optional time, choose priority and click Add Todo',
+      'High priority shows red dot · Medium priority shows yellow dot · Low priority shows green dot',
+      'Tick the circle when done — done tasks show with a strikethrough',
+      'Your todos are saved to a file on your computer: Documents → Taski → quicktodos.json',
+    ],
+  },
+  {
+    title: 'FILE ORGANIZER (Left Panel)',
+    items: [
+      'Sorts and organizes files in any folder on your computer using AI',
+      'Click the Downloads, Documents or Desktop button for quick access, or browse to any folder',
+      'TASKI scans the folder, asks Claude AI to plan the best folder structure, then shows you the plan before touching anything',
+      'Click Organize Now to move the files, or Cancel to stop',
+      'You can Undo at any time to put everything back where it was',
+      'Say "organize my downloads" in the chat to start from there',
+    ],
+  },
+  {
+    title: 'TASKI CHAT (Right Panel)',
+    items: [
+      'Ask TASKI anything in plain English',
+      'TASKI can check your calendar: "What\'s on my schedule tomorrow?" or "Am I free on Friday at 3pm?"',
+      'TASKI can search your emails: "Any emails from James this week?" or "Find emails about the invoice"',
+      'TASKI can send emails for you — always shows you the email before sending, nothing goes without your approval',
+      'TASKI can organize your files: "Organize my downloads folder"',
+      'TASKI can generate images: "/imagen a sunset over Sri Lanka" or "Generate an image of a mountain"',
+    ],
+  },
+  {
+    title: 'SLASH COMMANDS',
+    items: [
+      'Type / in the chat to see special modes',
+      '/youtube   — Get help with YouTube content, video titles, descriptions, SEO',
+      '/linkedin  — Write professional LinkedIn posts and messages',
+      '/email     — Get help writing professional emails with subject lines',
+      '/essay     — Academic writing help with structure and arguments',
+      '/learn     — Step by step explanations of any topic you want to learn',
+      '/school    — Homework help for all subjects',
+      '/code      — Code review, debugging help, and development advice',
+      '/health    — Wellness tips and fitness guidance',
+      '/finance   — Personal budgeting and basic investment information',
+      '/imagen    — Generate images using Google Nano Banana AI for free',
+      '/clear     — Go back to normal TASKI mode',
     ],
   },
   {
     title: 'VOICE CONTROL',
     items: [
-      'Click the microphone or press Ctrl+Shift+V to speak your commands',
-      'Live speech-to-text appears as you speak',
-      'Works with all features — calendar, Gmail, file organizer, and general questions',
-      'Music automatically reduces volume while you speak and restores when done',
+      'Click the microphone button or press Ctrl+Shift+V to start speaking',
+      'Speak your request naturally — TASKI listens and responds by speaking back',
+      'The circular visualizer in the middle shows what TASKI is doing: Spinning fast = listening · Orange = thinking · Pulsing = speaking · Slow spin = ready',
+      'Background music automatically goes quiet while you speak and comes back when you are done',
     ],
   },
   {
-    title: 'FILE ORGANIZER',
+    title: 'CHAT HISTORY',
     items: [
-      'Organize any folder on your computer intelligently using AI',
-      'Quick access to Downloads, Documents, Desktop, Pictures, Music and Videos',
-      'TASKI analyzes your files and creates a logical folder structure automatically',
-      'Always shows a preview plan before moving anything — you stay in control',
-      'Full UNDO support — restore files to their original locations anytime',
-      'Voice command: "Organize my downloads folder"',
+      'Every conversation with TASKI is automatically saved',
+      'Click the clock icon in the chat header to see past conversations',
+      'Search through old chats to find something TASKI told you before',
+      'Export any chat as a text file to save or share it',
+      'Your chats are saved to: Documents → Taski → chats.json',
     ],
   },
   {
-    title: 'JARVIS VISUALIZER',
+    title: 'CONTACTS AND MESSAGING',
     items: [
-      'Animated circular AI visualizer reacts to listening, processing and speaking states',
-      'Live clock with your local timezone',
-      'Location display with city and coordinates',
-      'Ambient futuristic background music with volume control and voice ducking',
+      'Save your important contacts with their phone number and Telegram username',
+      'Click W next to a contact to open WhatsApp with a message ready to send',
+      'Click T to send a Telegram message directly from Taski',
+      'Say "WhatsApp James about the meeting" and TASKI drafts the message for you',
+      'You always see the message before it is sent — nothing goes without your approval',
     ],
   },
   {
     title: 'IMAGE GENERATION',
     items: [
-      'Type /imagen followed by your description to generate images — FREE on Google AI free tier',
-      'Default model: Nano Banana (gemini-2.5-flash-image) — free, up to 500 images per day',
-      'Nano Banana is the default and works on any Google AI free account',
-      'Imagen 4 (paid) — highest quality: /imagen quality a detailed portrait — requires Google AI Pro',
-      'If Imagen 4 billing is not enabled, TASKI automatically falls back to Nano Banana',
-      'TASKI enhances your prompt with Claude AI for richer, more detailed results',
-      'Aspect ratio is auto-detected from your words: landscape, portrait, square, or photo',
-      'Click Regenerate to get a new variation, Edit to refine the prompt, or + Variation for more',
-      'Save images directly to your computer with the per-image save button',
-      'Natural language also works: "Generate an image of a sunset over the ocean"',
-      'Voice: "Draw me a futuristic city" or "Create a picture of a mountain lake"',
-      'Example: /imagen a Sri Lankan tea plantation at golden hour, landscape, golden tones',
-      'Example: /imagen portrait a professional headshot background, studio lighting',
-    ],
-  },
-  {
-    title: 'SLASH COMMAND SKILLS',
-    items: [
-      'Type / in the chat to see all available skills and filter by name',
-      '/youtube   — YouTube titles, descriptions, SEO strategy',
-      '/linkedin  — Professional posts, profiles, networking',
-      '/email     — Business email writing and subject lines',
-      '/essay     — Academic writing, arguments, citations',
-      '/learn     — Step by step learning on any topic',
-      '/school    — Homework help, exam prep, study plans',
-      '/code      — Code review, debugging, architecture',
-      '/health    — Wellness, fitness, and nutrition guidance',
-      '/finance   — Personal finance and budgeting basics',
-      '/whatsapp  — WhatsApp message crafting',
-      '/clear     — Return to standard TASKI mode',
-    ],
-  },
-  {
-    title: 'KEYBOARD SHORTCUTS',
-    items: [
-      'Ctrl+Shift+V    Toggle voice input',
-      'Escape          Close modals and panels',
-      'Enter           Send chat message',
-      'Arrow keys      Navigate skill autocomplete menu',
-      'Tab             Select highlighted skill',
+      'Type /imagen followed by what you want to see to generate an image',
+      'TASKI improves your description automatically for better results',
+      'Click Regenerate to get a different version · Click Save to download the image',
+      'Example: /imagen a futuristic city at night',
+      'Example: /imagen a professional office background',
+      'Example: /imagen a cartoon cat using a laptop',
     ],
   },
   {
     title: 'PRIVACY AND SECURITY',
     items: [
-      'Google OAuth — you sign in securely, TASKI never stores your password',
-      'Gmail access is read-only except for sending emails you explicitly approve',
-      'File organizer never deletes files — only moves them with your confirmation',
-      'All AI processing uses the Anthropic Claude API with your own API key',
+      'Your Google password is never stored in Taski — Google handles the login',
+      'TASKI never sends emails or moves files without showing you first and getting your approval',
+      'Your API keys are stored only in the .env file on your computer and are never shared',
+      'All your data stays on your computer — tasks, todos, and chats are saved as simple files you can read anytime',
+    ],
+  },
+  {
+    title: 'KEYBOARD SHORTCUTS',
+    items: [
+      'Ctrl+Shift+V    Start or stop voice input',
+      'Enter           Send a chat message',
+      'Escape          Close any open panel',
+      '/               Type slash to see skills',
+    ],
+  },
+  {
+    title: 'FILE LOCATIONS',
+    items: [
+      'To Do List:         Documents → Taski → quicktodos.json',
+      'Chat History:       Documents → Taski → chats.json',
+      'File Organizer Log: Inside your organized folder as taski_organize_log.json',
     ],
   },
 ];
@@ -327,8 +349,9 @@ export default function HelpModal({ isOpen, onClose }) {
             lineHeight:    1.8,
           }}
         >
-          Built with Claude AI · Anthropic API<br />
-          Google Calendar · Gmail · Electron
+          Taski · Powered by Claude AI (Anthropic)<br />
+          Google Calendar · Gmail · Google Imagen<br />
+          Built with Electron + React
         </div>
       </div>
     </div>
