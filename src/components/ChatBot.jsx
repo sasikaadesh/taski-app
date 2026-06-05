@@ -567,10 +567,11 @@ export default function ChatBot({
   const [viewingPast,  setViewingPast]  = useState(null);
 
   // ── Skill state ───────────────────────────────────────────────────────────
-  const [activeSkill,    setActiveSkill]    = useState(null);   // skill object or null
-  const [showSkillMenu,  setShowSkillMenu]  = useState(false);  // autocomplete popup
-  const [skillFilter,    setSkillFilter]    = useState('');     // text after /
-  const [skillMenuIndex, setSkillMenuIndex] = useState(0);      // keyboard nav
+  const [activeSkill,       setActiveSkill]       = useState(null);   // skill object or null
+  const [activeSubcategory, setActiveSubcategory] = useState(null);   // subcategory object or null
+  const [showSkillMenu,     setShowSkillMenu]     = useState(false);  // autocomplete popup
+  const [skillFilter,       setSkillFilter]       = useState('');     // text after /
+  const [skillMenuIndex,    setSkillMenuIndex]    = useState(0);      // keyboard nav
   const ALL_SKILLS = getAllSkills();
 
   const bottomRef  = useRef(null);
@@ -747,6 +748,7 @@ export default function ChatBot({
       return;
     }
     setActiveSkill(skill);
+    setActiveSubcategory(null);
     setShowSkillMenu(false);
     setInput('');
     const msg = `TASKI: ${skill.name} mode activated. What would you like help with?`;
@@ -756,11 +758,20 @@ export default function ChatBot({
 
   function clearSkill() {
     setActiveSkill(null);
+    setActiveSubcategory(null);
     setShowSkillMenu(false);
     setInput('');
     const msg = 'TASKI: Returning to standard mode.';
     setMessages((prev) => [...prev, { role: 'assistant', content: msg }].slice(-MAX_MESSAGES));
     speakText(msg);
+  }
+
+  function handleSubcategoryClick(subcategory) {
+    setActiveSubcategory(subcategory);
+    if (subcategory.starter) {
+      setInput(subcategory.starter);
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
   }
 
   function handleInputChange(e) {
@@ -1380,6 +1391,9 @@ export default function ChatBot({
       let system     = `${CHATBOT_SYSTEM}\n\n${dateContext}`;
       if (activeSkill) {
         system += `\n\n── ACTIVE SKILL: ${activeSkill.name} ──\n${activeSkill.prompt}`;
+        if (activeSubcategory) {
+          system += `\n\nActive mode: ${activeSubcategory.label}\nFocus specifically on ${activeSubcategory.label} for this conversation.`;
+        }
       }
       let checkedTag = null;
 
@@ -1798,6 +1812,111 @@ export default function ChatBot({
           </div>
         )}
 
+        {/* ── Skill header bar ── */}
+        {activeSkill && (
+          <div
+            style={{
+              background:   'rgba(0,212,255,0.05)',
+              border:       '1px solid rgba(0,212,255,0.2)',
+              borderRadius: '8px',
+              padding:      '10px 14px',
+              marginBottom: '4px',
+              flexShrink:   0,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '16px', lineHeight: 1 }}>{activeSkill.icon || '⚡'}</span>
+                <span
+                  style={{
+                    fontFamily:    "'Orbitron', sans-serif",
+                    fontSize:      '11px',
+                    fontWeight:    700,
+                    letterSpacing: '0.1em',
+                    color:         '#00d4ff',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  {activeSkill.name}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={clearSkill}
+                aria-label="Deactivate skill"
+                style={{
+                  background:  'none',
+                  border:      'none',
+                  cursor:      'pointer',
+                  color:       'rgba(0,212,255,0.4)',
+                  fontSize:    '18px',
+                  lineHeight:  1,
+                  padding:     '0 4px',
+                  transition:  'color 150ms',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = '#ff2d55'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(0,212,255,0.4)'; }}
+              >
+                ×
+              </button>
+            </div>
+            <div
+              style={{
+                fontFamily:  "'Rajdhani', sans-serif",
+                fontSize:    '11px',
+                color:       'rgba(0,212,255,0.5)',
+                marginTop:   '3px',
+              }}
+            >
+              {activeSkill.description}
+            </div>
+            {/* Subcategory pills */}
+            {activeSkill.subcategories?.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                {activeSkill.subcategories.map((sc) => {
+                  const isActive = activeSubcategory?.value === sc.value;
+                  return (
+                    <button
+                      key={sc.value}
+                      type="button"
+                      onClick={() => handleSubcategoryClick(sc)}
+                      style={{
+                        background:   isActive ? 'rgba(0,212,255,0.2)'  : 'rgba(0,212,255,0.06)',
+                        border:       isActive ? '1px solid #00d4ff'    : '1px solid rgba(0,212,255,0.2)',
+                        borderRadius: '20px',
+                        padding:      '4px 12px',
+                        fontSize:     '11px',
+                        fontFamily:   "'Rajdhani', sans-serif",
+                        color:        isActive ? '#00d4ff'               : 'rgba(0,212,255,0.7)',
+                        cursor:       'pointer',
+                        transition:   'all 0.15s',
+                        letterSpacing:'0.05em',
+                        boxShadow:    isActive ? '0 0 8px rgba(0,212,255,0.2)' : 'none',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isActive) {
+                          e.currentTarget.style.background   = 'rgba(0,212,255,0.15)';
+                          e.currentTarget.style.borderColor  = 'rgba(0,212,255,0.6)';
+                          e.currentTarget.style.color        = '#00d4ff';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isActive) {
+                          e.currentTarget.style.background   = 'rgba(0,212,255,0.06)';
+                          e.currentTarget.style.borderColor  = 'rgba(0,212,255,0.2)';
+                          e.currentTarget.style.color        = 'rgba(0,212,255,0.7)';
+                        }
+                      }}
+                    >
+                      {sc.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {messages.length === 0 && !viewingPast && (
           <div
             style={{
@@ -2069,55 +2188,57 @@ export default function ChatBot({
               left:         '14px',
               right:        '14px',
               marginBottom: '4px',
-              background:   'var(--color-bg-raised)',
-              border:       '1px solid rgba(0,212,255,0.3)',
-              borderRadius: '4px',
-              overflow:     'hidden',
-              boxShadow:    '0 0 20px rgba(0,212,255,0.15)',
-              zIndex:       50,
+              background:   'rgba(2,15,35,0.97)',
+              border:       '1px solid rgba(0,212,255,0.25)',
+              borderRadius: '8px',
+              maxHeight:    '320px',
+              overflowY:    'auto',
+              zIndex:       1000,
+              boxShadow:    '0 -8px 32px rgba(0,0,0,0.6)',
+              padding:      '4px',
             }}
           >
-            <div
-              style={{
-                fontFamily:    "'Rajdhani', sans-serif",
-                fontSize:      '9px',
-                fontWeight:    600,
-                letterSpacing: '0.2em',
-                textTransform: 'uppercase',
-                color:         'rgba(0,212,255,0.5)',
-                padding:       '6px 12px 4px',
-                borderBottom:  '1px solid rgba(0,212,255,0.1)',
-              }}
-            >
-              SKILLS
-            </div>
             {filteredSkills.map((skill, idx) => (
               <button
                 key={skill.trigger}
                 type="button"
                 onClick={() => activateSkill(skill)}
                 style={{
-                  display:       'flex',
-                  alignItems:    'center',
-                  gap:           '10px',
-                  width:         '100%',
-                  padding:       '7px 12px',
-                  background:    idx === skillMenuIndex ? 'rgba(0,212,255,0.1)' : 'transparent',
-                  border:        'none',
-                  borderBottom:  idx < filteredSkills.length - 1 ? '1px solid rgba(0,212,255,0.06)' : 'none',
-                  cursor:        'pointer',
-                  textAlign:     'left',
+                  display:     'flex',
+                  alignItems:  'center',
+                  gap:         '10px',
+                  width:       '100%',
+                  padding:     '8px 12px',
+                  background:  idx === skillMenuIndex ? 'rgba(0,212,255,0.08)' : 'transparent',
+                  border:      'none',
+                  borderLeft:  idx === skillMenuIndex ? '2px solid #00d4ff' : '2px solid transparent',
+                  borderRadius:'6px',
+                  cursor:      'pointer',
+                  textAlign:   'left',
+                  transition:  'background 0.15s',
                 }}
                 onMouseEnter={() => setSkillMenuIndex(idx)}
               >
                 <span
                   style={{
+                    fontSize:   '16px',
+                    width:      '24px',
+                    textAlign:  'center',
+                    flexShrink: 0,
+                    lineHeight: 1,
+                  }}
+                >
+                  {skill.icon || '⚡'}
+                </span>
+                <span
+                  style={{
                     fontFamily:    "'Rajdhani', sans-serif",
                     fontSize:      '13px',
-                    fontWeight:    600,
+                    fontWeight:    500,
                     letterSpacing: '0.04em',
                     color:         '#00d4ff',
-                    minWidth:      '80px',
+                    minWidth:      '90px',
+                    flexShrink:    0,
                   }}
                 >
                   {skill.trigger}
@@ -2126,14 +2247,47 @@ export default function ChatBot({
                   style={{
                     fontFamily:  "'Rajdhani', sans-serif",
                     fontSize:    '12px',
-                    color:       'var(--color-text-secondary)',
-                    letterSpacing: '0.02em',
+                    color:       'rgba(255,255,255,0.8)',
+                    flex:        1,
+                    letterSpacing: '0.01em',
+                  }}
+                >
+                  {skill.name}
+                </span>
+                <span
+                  style={{
+                    fontFamily:   "'Rajdhani', sans-serif",
+                    fontSize:     '11px',
+                    color:        'rgba(0,212,255,0.4)',
+                    flexShrink:   0,
+                    maxWidth:     '110px',
+                    overflow:     'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace:   'nowrap',
+                    marginLeft:   'auto',
                   }}
                 >
                   {skill.description}
                 </span>
               </button>
             ))}
+            {/* Count indicator */}
+            <div
+              style={{
+                fontFamily:    "'Rajdhani', sans-serif",
+                fontSize:      '10px',
+                color:         'rgba(0,212,255,0.3)',
+                textAlign:     'center',
+                padding:       '4px 8px',
+                letterSpacing: '0.04em',
+                borderTop:     '1px solid rgba(0,212,255,0.08)',
+                marginTop:     '2px',
+              }}
+            >
+              {skillFilter
+                ? `${filteredSkills.length} of ${ALL_SKILLS.length} skills`
+                : `Showing all ${ALL_SKILLS.length} skills`}
+            </div>
           </div>
         )}
 
