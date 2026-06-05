@@ -768,10 +768,7 @@ export default function ChatBot({
 
   function handleSubcategoryClick(subcategory) {
     setActiveSubcategory(subcategory);
-    if (subcategory.starter) {
-      setInput(subcategory.starter);
-      setTimeout(() => inputRef.current?.focus(), 0);
-    }
+    setTimeout(() => inputRef.current?.focus(), 0);
   }
 
   function handleInputChange(e) {
@@ -1047,6 +1044,12 @@ export default function ChatBot({
     {
       const imgReq = detectImageRequest(text, activeSkill?.trigger);
       if (imgReq) {
+        // Merge active subcategory style into the prompt (e.g. Cartoon, Cinematic)
+        if (activeSkill?.trigger === '/imagen' && activeSubcategory) {
+          const stylePrefix = activeSubcategory.starter
+            || `Generate a ${activeSubcategory.label.toLowerCase()} style image of: `;
+          imgReq.prompt = stylePrefix + imgReq.prompt;
+        }
         setLoading(false); // ImagenResultCard shows its own loading state
         onVisualizerState?.('processing');
         await handleImageGeneration(imgReq.prompt, imgReq.model);
@@ -2291,6 +2294,39 @@ export default function ChatBot({
           </div>
         )}
 
+        {/* Active subcategory style badge */}
+        {activeSubcategory && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', paddingLeft: '2px' }}>
+            <span style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: '10px', fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'rgba(0,212,255,0.5)' }}>
+              Style:
+            </span>
+            <span style={{
+              fontFamily:    "'Rajdhani', sans-serif",
+              fontSize:      '10px',
+              fontWeight:    600,
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              color:         '#00d4ff',
+              background:    'rgba(0,212,255,0.12)',
+              border:        '1px solid rgba(0,212,255,0.35)',
+              borderRadius:  '20px',
+              padding:       '2px 10px',
+            }}>
+              {activeSubcategory.label}
+            </span>
+            <button
+              type="button"
+              onClick={() => setActiveSubcategory(null)}
+              aria-label="Clear style"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(0,212,255,0.35)', fontSize: '13px', lineHeight: 1, padding: '0 2px', transition: 'color 150ms' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = '#ff2d55'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(0,212,255,0.35)'; }}
+            >
+              ×
+            </button>
+          </div>
+        )}
+
         {/* Recording indicator */}
         {speech.isListening && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '8px', paddingLeft: '2px' }}>
@@ -2435,9 +2471,10 @@ export default function ChatBot({
             ref={inputRef}
             type="text"
             placeholder={
-              speech.isProcessing  ? 'Transcribing your speech…'           :
-              speech.isListening   ? 'Recording — click ⏹ to stop…'        :
-              pendingEmailContext  ? 'Enter email address…'                 :
+              speech.isProcessing  ? 'Transcribing your speech…'                                          :
+              speech.isListening   ? 'Recording — click ⏹ to stop…'                                       :
+              pendingEmailContext  ? 'Enter email address…'                                               :
+              activeSubcategory   ? `Describe your image — ${activeSubcategory.label} style will be applied…` :
                                     'Ask TASKI anything… (type / for skills)'
             }
             value={input}
