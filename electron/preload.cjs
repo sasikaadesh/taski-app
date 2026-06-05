@@ -32,6 +32,18 @@ contextBridge.exposeInMainWorld('taskiAPI', {
   showNotification: (title, body)         => ipcRenderer.invoke('show-notification', title, body),
   loadSkills:       ()                    => ipcRenderer.invoke('load-skills'),
   saveImageBase64:  (base64, filename)    => ipcRenderer.invoke('save-image-base64', base64, filename),
+  downloadWebsite:  (data)               => ipcRenderer.invoke('download-website', data),
+
+  // Window controls
+  windowFullscreen:    () => ipcRenderer.invoke('window-fullscreen'),
+  windowRestore:       () => ipcRenderer.invoke('window-restore'),
+  windowGetFullscreen: () => ipcRenderer.invoke('window-get-fullscreen'),
+  onFullscreenChange:  (cb) => ipcRenderer.on('fullscreen-changed', (_e, isFs) => cb(isFs)),
+
+  // Google OAuth
+  googleAuthStart:    ()       => ipcRenderer.invoke('google-auth-start'),
+  googleAuthExchange: (data)   => ipcRenderer.invoke('google-auth-exchange', data),
+  googleAuthRefresh:  (token)  => ipcRenderer.invoke('google-auth-refresh', token),
 
   isElectron: true,
 })

@@ -10,44 +10,13 @@
 //
 // Scope: calendar covers reading/writing events AND listing all calendars (calendarList).
 
-const CLIENT_ID    = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-const REDIRECT_URI = window.location.origin; // e.g. http://localhost:5173
-// Full calendar scope + Gmail readonly + Gmail send.
-// gmail.readonly is needed for the chatbot Gmail search feature.
-// gmail.send is needed for the chatbot email send feature.
-// NOTE: You must also enable the Gmail API in Google Cloud Console:
-//   https://console.cloud.google.com/apis/library/gmail.googleapis.com
-// The gmail.send scope should already be enabled since you enabled the Gmail
-// API earlier — but confirm it's listed under OAuth consent screen scopes.
-// Users who authenticated before this scope was added must re-authenticate
-// once to grant the new permission (the popup will show the updated consent).
-const SCOPES =
-  'https://www.googleapis.com/auth/calendar ' +
-  'https://www.googleapis.com/auth/gmail.readonly ' +
-  'https://www.googleapis.com/auth/gmail.send';
-const TOKEN_KEY    = 'taski_goog_token';
+import { getValidToken, signOut, isAuthenticated as googleIsAuthenticated } from './googleAuth';
 
-// ── Token storage ─────────────────────────────────────────────────────────────
-
-function storeToken(accessToken, expiresIn) {
-  const data = {
-    token:     accessToken,
-    expiresAt: Date.now() + parseInt(expiresIn, 10) * 1000,
-  };
-  try { localStorage.setItem(TOKEN_KEY, JSON.stringify(data)); } catch { /* ignore */ }
-  return data.token;
-}
-
-function getStoredToken() {
-  try {
-    const data = JSON.parse(localStorage.getItem(TOKEN_KEY) ?? 'null');
-    if (data?.token && data.expiresAt > Date.now() + 60_000) return data.token;
-  } catch { /* ignore */ }
-  return null;
-}
+// ── Token management (delegated to googleAuth.js) ────────────────────────────
 
 export function clearToken() {
-  try { localStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ }
+  try { localStorage.removeItem('taski_goog_token'); } catch { /* ignore */ }
+  signOut();
 }
 
 /**
@@ -56,70 +25,7 @@ export function clearToken() {
  * Exported so that other modules (e.g. gmail.js) can share the same auth flow.
  */
 export async function getGoogleAccessToken() {
-  let token = getStoredToken();
-  if (!token) token = await signInWithPopup();
-  return token;
-}
-
-// ── OAuth2 implicit-flow popup ────────────────────────────────────────────────
-
-function buildAuthUrl() {
-  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-  url.searchParams.set('client_id',     CLIENT_ID);
-  url.searchParams.set('redirect_uri',  REDIRECT_URI);
-  url.searchParams.set('response_type', 'token');
-  url.searchParams.set('scope',         SCOPES);
-  url.searchParams.set('prompt',        'select_account');
-  return url.toString();
-}
-
-/**
- * Open a popup to Google's OAuth consent screen.
- * Resolves with the access token once the popup lands back on our origin.
- * Rejects if the user closes the popup without completing sign-in.
- */
-function signInWithPopup() {
-  return new Promise((resolve, reject) => {
-    const popup = window.open(
-      buildAuthUrl(),
-      'taski-google-auth',
-      'width=520,height=620,left=200,top=100,toolbar=0,menubar=0,scrollbars=1'
-    );
-
-    if (!popup) {
-      reject(new Error('Popup was blocked. Please allow popups for this site and try again.'));
-      return;
-    }
-
-    const timer = setInterval(() => {
-      // If user closed the popup without finishing
-      if (popup.closed) {
-        clearInterval(timer);
-        reject(new Error('Google sign-in was cancelled.'));
-        return;
-      }
-
-      try {
-        // This throws while the popup is on google.com (cross-origin).
-        // Once it redirects back to our origin we can read the hash.
-        const hash = popup.location.hash;
-        if (!hash) return;
-
-        const params = new URLSearchParams(hash.substring(1));
-        const accessToken = params.get('access_token');
-        const expiresIn   = params.get('expires_in') ?? '3599';
-
-        if (accessToken) {
-          clearInterval(timer);
-          popup.close();
-          const token = storeToken(accessToken, expiresIn);
-          resolve(token);
-        }
-      } catch {
-        // Still on google.com — keep polling
-      }
-    }, 400);
-  });
+  return getValidToken();
 }
 
 // ── Authenticated fetch helper ────────────────────────────────────────────────
@@ -134,8 +40,7 @@ function signInWithPopup() {
  * @returns {Promise<Response>} — guaranteed ok, or throws
  */
 async function calendarFetch(url, init = {}) {
-  let token = getStoredToken();
-  if (!token) token = await signInWithPopup();
+  const token = await getValidToken();
 
   const withAuth = (t) => ({
     ...init,
@@ -144,11 +49,9 @@ async function calendarFetch(url, init = {}) {
 
   const res = await fetch(url, withAuth(token));
 
-  // 401 = expired / revoked  •  403 = insufficient scope (old readonly token)
-  // Either way: clear + re-auth, then retry once.
   if (res.status === 401 || res.status === 403) {
-    clearToken();
-    const fresh = await signInWithPopup();
+    signOut();
+    const fresh = await getValidToken();
     const retry = await fetch(url, withAuth(fresh));
     if (!retry.ok) throw new Error(`Google Calendar API error ${retry.status}`);
     return retry;
@@ -333,7 +236,7 @@ export async function getCalendarEventsForRange(startDate, endDate) {
  * This is a synchronous check — it never opens the auth popup.
  */
 export function isSignedIn() {
-  return Boolean(getStoredToken());
+  return googleIsAuthenticated();
 }
 
 /**

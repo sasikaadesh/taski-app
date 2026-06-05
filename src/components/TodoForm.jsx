@@ -150,7 +150,7 @@ export default function TodoForm({ onAdd }) {
     border:        '1px solid var(--color-border)',
     borderRadius:  '4px',
     color:         isLocked ? 'var(--color-text-dim)' : 'var(--color-text-primary)',
-    padding:       '10px 14px',
+    padding:       '6px 10px',
     width:         '100%',
     fontSize:      '15px',
     fontFamily:    "'Rajdhani', sans-serif",
@@ -189,13 +189,15 @@ export default function TodoForm({ onAdd }) {
       <form
         onSubmit={handleSubmit}
         style={{
-          background:   'var(--color-bg-raised)',
-          border:       '1px solid var(--color-border)',
-          borderRadius: '6px',
-          padding:      '24px',
+          background:    'var(--color-bg-raised)',
+          border:        '1px solid var(--color-border)',
+          borderRadius:  '6px',
+          padding:       '10px 12px',
+          display:       'flex',
+          flexDirection: 'column',
+          gap:           '8px',
           transition:   'border-color 250ms cubic-bezier(0.16,1,0.3,1), box-shadow 250ms cubic-bezier(0.16,1,0.3,1)',
         }}
-        className="flex flex-col gap-4"
         onMouseEnter={(e) => {
           if (isLocked) return;
           e.currentTarget.style.borderColor = 'var(--color-border-bright)';
@@ -206,22 +208,9 @@ export default function TodoForm({ onAdd }) {
           e.currentTarget.style.boxShadow   = 'none';
         }}
       >
-        <h2
-          style={{
-            fontFamily:    "'Rajdhani', sans-serif",
-            fontSize:      '16px',
-            fontWeight:    700,
-            letterSpacing: '0.06em',
-            textTransform: 'uppercase',
-            color:         'var(--color-text-primary)',
-            margin:        0,
-          }}
-        >
-          Add a task
-        </h2>
 
         {/* Title */}
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1">
           <label style={labelStyle} htmlFor="todo-title">Task title</label>
           <input
             id="todo-title"
@@ -237,7 +226,7 @@ export default function TodoForm({ onAdd }) {
         </div>
 
         {/* Date row */}
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1">
           <label style={labelStyle} htmlFor="todo-date">
             <Calendar size={11} aria-hidden="true" />
             Date
@@ -247,8 +236,9 @@ export default function TodoForm({ onAdd }) {
             type="date"
             value={date}
             onChange={(e) => setDate(e.target.value)}
+            min={new Date().toISOString().split('T')[0]}
             disabled={isLocked}
-            style={inputBase}
+            style={{ ...inputBase, colorScheme: 'dark', WebkitColorScheme: 'dark' }}
             onFocus={onFocusInput}
             onBlur={onBlurInput}
           />
@@ -257,7 +247,7 @@ export default function TodoForm({ onAdd }) {
         {/* Start Time + End Time row */}
         <div className="flex gap-3">
           {/* Start time picker */}
-          <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+          <div className="flex flex-col gap-1 flex-1 min-w-0">
             <label style={labelStyle} htmlFor="todo-time">
               <Clock size={11} aria-hidden="true" />
               Start Time
@@ -275,7 +265,7 @@ export default function TodoForm({ onAdd }) {
           </div>
 
           {/* End time picker */}
-          <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+          <div className="flex flex-col gap-1 flex-1 min-w-0">
             <label style={labelStyle} htmlFor="todo-end-time">
               <Clock size={11} aria-hidden="true" />
               End Time
@@ -335,7 +325,7 @@ export default function TodoForm({ onAdd }) {
             fontWeight:     500,
             letterSpacing:  '0.1em',
             textTransform:  'uppercase',
-            padding:        '12px 24px',
+            padding:        '8px 16px',
             width:          '100%',
             cursor:         canSubmit ? 'pointer' : 'not-allowed',
             opacity:        canSubmit ? 1 : 0.35,

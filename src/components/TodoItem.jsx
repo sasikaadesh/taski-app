@@ -19,7 +19,7 @@ export default function TodoItem({ todo, onToggle, onDelete }) {
           ? '2px solid var(--color-success)'
           : '2px solid transparent',
         borderRadius:  '6px',
-        padding:       '16px',
+        padding:       '8px 12px',
         opacity:       todo.done ? 0.5 : 1,
         transition:    'border-color 250ms cubic-bezier(0.16,1,0.3,1), background 250ms cubic-bezier(0.16,1,0.3,1), box-shadow 250ms cubic-bezier(0.16,1,0.3,1)',
       }}
@@ -77,7 +77,7 @@ export default function TodoItem({ todo, onToggle, onDelete }) {
         <p
           style={{
             fontFamily:     "'Rajdhani', sans-serif",
-            fontSize:       '16px',
+            fontSize:       '14px',
             fontWeight:     todo.done ? 400 : 500,
             letterSpacing:  '0.03em',
             color:          todo.done ? 'var(--color-text-dim)' : 'var(--color-text-primary)',

@@ -64,9 +64,24 @@ const SECTIONS = [
     ],
   },
   {
+    title: 'WEBSITE GENERATOR',
+    items: [
+      'Type /website in the chat to open the stunning website generator',
+      'Choose from 6 professional templates (SaaS, Portfolio, Dashboard, Product, Agency, Startup) or describe exactly what you want in detail',
+      'TASKI generates complete static HTML websites with professional GSAP animations — the same animation library used by Apple, Google and award-winning agencies',
+      'Every website includes: smooth scroll-triggered reveal animations, 3D card tilt effects on hover, particle or gradient hero backgrounds, counter animations for statistics, magnetic button hover effects, parallax scrolling effects, and mobile responsive design',
+      'Preview live in Desktop, Tablet and Mobile views inside Taski',
+      'Download as a single HTML file — open it in any browser, no setup needed',
+      'Example: /website dark SaaS landing page for an AI writing tool with pricing and features',
+      'Example: /website creative portfolio for a UX designer with project case studies',
+      'Example: /website luxury real estate agency with property showcase and contact form',
+    ],
+  },
+  {
     title: 'SLASH COMMANDS',
     items: [
       'Type / in the chat to see special modes',
+      '/website   — Generate stunning websites and dashboards with AI',
       '/youtube   — Get help with YouTube content, video titles, descriptions, SEO',
       '/linkedin  — Write professional LinkedIn posts and messages',
       '/email     — Get help writing professional emails with subject lines',

@@ -13,9 +13,121 @@
 //   enabled earlier — verify it appears in your OAuth consent screen scopes.
 //   Add the same OAuth 2.0 Client ID you use for Google Calendar.
 
-import { getGoogleAccessToken, clearToken } from './googleCalendar';
+import { getValidToken, signOut } from './googleAuth';
 
 const GMAIL_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
+
+// ── Query builder ─────────────────────────────────────────────────────────────
+
+/**
+ * Build a Gmail search query from a natural-language user message.
+ * Handles partial domain searches (e.g. "emails from Temu.com" → from:@temu.com).
+ */
+export function buildQuery(userMessage) {
+  const msg = userMessage.toLowerCase();
+  const tz  = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  let queryParts = [];
+
+  // ── Sender detection ───────────────────────────────────────────────────────
+  const fromPatterns = [
+    /emails?\s+from\s+([a-zA-Z0-9@._\-\s]+?)(?=\s+(?:on|today|yesterday|this|about|that|which|and)\b|$)/i,
+    /from\s+([a-zA-Z0-9@._\-\s]+?)(?=\s+(?:on|today|yesterday|this|about|emails?)\b|$)/i,
+    /sent\s+by\s+([a-zA-Z0-9@._\-\s]+?)(?=\s|$)/i,
+    /messages?\s+from\s+([a-zA-Z0-9@._\-\s]+?)(?=\s|$)/i,
+  ];
+
+  let senderRaw = null;
+  for (const pattern of fromPatterns) {
+    const match = userMessage.match(pattern);
+    if (match?.[1]) { senderRaw = match[1].trim(); break; }
+  }
+
+  if (senderRaw) {
+    const sender = senderRaw.trim().replace(/\s+/g, ' ');
+
+    if (sender.includes('@')) {
+      // Full email address: john@company.com
+      queryParts.push('from:' + sender);
+    } else if (sender.match(/\.[a-z]{2,}$/i) && !sender.includes(' ')) {
+      // Domain with extension: temu.com, amazon.co.uk
+      // from:@domain catches any email sent from that domain
+      const cleanDomain = sender.toLowerCase().replace(/^www\./, '');
+      queryParts.push('from:@' + cleanDomain);
+    } else if (sender.includes(' ')) {
+      // Multi-word name: "John Smith", "Amazon Web Services"
+      const noSpaces   = sender.replace(/\s+/g, '');
+      const fromClause = '(from:' + noSpaces + ' OR "' + sender + '")';
+      queryParts.push(fromClause);
+    } else {
+      // Single word: "Temu", "Netflix", "Amazon"
+      queryParts.push(
+        '(from:' + sender + ' OR from:@' + sender.toLowerCase() + '.com)',
+      );
+    }
+  }
+
+  // ── Subject detection ──────────────────────────────────────────────────────
+  const subjectPatterns = [
+    /about\s+["']?([a-zA-Z0-9\s\-_]+?)["']?(?=\s+from|\s+on|$)/i,
+    /subject[:\s]+["']?([a-zA-Z0-9\s\-_]+?)["']?(?=\s|$)/i,
+    /regarding\s+([a-zA-Z0-9\s\-_]+?)(?=\s|$)/i,
+    /related\s+to\s+([a-zA-Z0-9\s\-_]+?)(?=\s|$)/i,
+  ];
+  for (const pattern of subjectPatterns) {
+    const match = userMessage.match(pattern);
+    if (match?.[1] && match[1].trim().length > 2) {
+      queryParts.push('subject:"' + match[1].trim() + '"');
+      break;
+    }
+  }
+
+  // ── Date detection ─────────────────────────────────────────────────────────
+  const now = new Date();
+  const localDate = (d) => d.toLocaleDateString('en-CA', { timeZone: tz });
+
+  if (msg.includes('today')) {
+    queryParts.push('after:' + localDate(now));
+  } else if (msg.includes('yesterday')) {
+    const y = new Date(now); y.setDate(y.getDate() - 1);
+    queryParts.push('after:' + localDate(y) + ' before:' + localDate(now));
+  } else if (msg.includes('this week') || msg.includes('past week') || msg.includes('last week')) {
+    const w = new Date(now); w.setDate(w.getDate() - 7);
+    queryParts.push('after:' + localDate(w));
+  } else if (msg.includes('this month')) {
+    const m = new Date(now); m.setDate(1);
+    queryParts.push('after:' + localDate(m));
+  }
+
+  const dateMatch = userMessage.match(/on\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})/i);
+  if (dateMatch) {
+    const months = { jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12' };
+    const month  = months[dateMatch[1].toLowerCase().slice(0, 3)];
+    const day    = dateMatch[2].padStart(2, '0');
+    queryParts.push('after:' + now.getFullYear() + '/' + month + '/' + day);
+  }
+
+  // ── Other filters ──────────────────────────────────────────────────────────
+  if (msg.includes('unread'))                              queryParts.push('is:unread');
+  if (msg.includes('attachment') || msg.includes('attached')) queryParts.push('has:attachment');
+  if (msg.includes('sent') && !msg.includes('from'))       queryParts.push('in:sent');
+
+  // ── Fallback keyword extraction ────────────────────────────────────────────
+  if (queryParts.length === 0) {
+    const stopWords = new Set([
+      'are','there','any','emails','email','from','my','the','a','an','on','in',
+      'at','to','for','of','and','or','with','have','has','been','today','show',
+      'me','find','search','check','get','can','you','please','gmail','inbox',
+      'messages','sent','received','i','is','it','this','that',
+    ]);
+    const keywords = userMessage.toLowerCase()
+      .replace(/[^\w\s]/g, ' ').split(/\s+/)
+      .filter((w) => w.length > 2 && !stopWords.has(w))
+      .slice(0, 3);
+    return keywords.length > 0 ? keywords.join(' ') : 'in:inbox newer_than:1d';
+  }
+
+  return queryParts.join(' ');
+}
 
 // ── Authenticated fetch helper ────────────────────────────────────────────────
 
@@ -34,7 +146,7 @@ const GMAIL_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
 async function gmailFetch(url, init = {}) {
   let token;
   try {
-    token = await getGoogleAccessToken();
+    token = await getValidToken();
   } catch (err) {
     if (err.message?.toLowerCase().includes('cancel')) {
       throw new Error('GMAIL_AUTH_CANCELLED');
@@ -55,10 +167,10 @@ async function gmailFetch(url, init = {}) {
   // Clear the stored token, which forces a fresh sign-in with the updated SCOPES
   // (now includes gmail.readonly) so the user consents once and both services work.
   if (res.status === 401 || res.status === 403) {
-    clearToken();
+    signOut();
     let freshToken;
     try {
-      freshToken = await getGoogleAccessToken();
+      freshToken = await getValidToken();
     } catch (err) {
       if (err.message?.toLowerCase().includes('cancel')) {
         throw new Error('GMAIL_AUTH_CANCELLED');
@@ -87,19 +199,41 @@ async function gmailFetch(url, init = {}) {
  * @returns {Promise<Array<{id, from, subject, date, snippet, unread}>>}
  */
 export async function searchEmails(query) {
-  // Step 1 — get matching message IDs
-  const listUrl = new URL(`${GMAIL_BASE}/messages`);
-  listUrl.searchParams.set('q',          query);
-  listUrl.searchParams.set('maxResults', '5');
+  console.log('Searching Gmail with:', query);
 
-  const listRes  = await gmailFetch(listUrl.toString());
-  const listData = await listRes.json();
-  const messageIds = (listData.messages ?? []).slice(0, 5).map((m) => m.id);
+  // Step 1 — get matching message IDs
+  const messageIds = await fetchMessageIds(query, 5);
+
+  // If no results and query has a from: clause, retry without it
+  if (messageIds.length === 0 && query.includes('from:')) {
+    const broaderQuery = query
+      .replace(/from:\([^)]+\)/g, '')
+      .replace(/from:\S+/g, '')
+      .trim();
+    if (broaderQuery.length > 0) {
+      console.log('Retrying broader query:', broaderQuery);
+      const fallbackIds = await fetchMessageIds(broaderQuery, 5).catch(() => []);
+      if (fallbackIds.length > 0) {
+        return fetchMessageDetails(fallbackIds);
+      }
+    }
+    return [];
+  }
 
   if (messageIds.length === 0) return [];
+  return fetchMessageDetails(messageIds);
+}
 
-  // Step 2 — fetch metadata for each message in parallel
-  // (metadata format avoids downloading the full body for privacy & speed)
+async function fetchMessageIds(query, max) {
+  const listUrl = new URL(`${GMAIL_BASE}/messages`);
+  listUrl.searchParams.set('q',          query);
+  listUrl.searchParams.set('maxResults', String(max));
+  const listRes  = await gmailFetch(listUrl.toString());
+  const listData = await listRes.json();
+  return (listData.messages ?? []).slice(0, max).map((m) => m.id);
+}
+
+async function fetchMessageDetails(messageIds) {
   const results = await Promise.all(
     messageIds.map(async (id) => {
       const msgUrl =
@@ -113,12 +247,10 @@ export async function searchEmails(query) {
         const msg    = await msgRes.json();
         return parseMessage(msg);
       } catch {
-        // Skip individual messages that fail — still return the others
         return null;
       }
     })
   );
-
   return results.filter(Boolean);
 }
 

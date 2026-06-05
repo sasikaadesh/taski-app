@@ -41,6 +41,18 @@
   --color-accent-muted:      rgba(0, 212, 255, 0.15);
 }
 
+/* ── Date picker dark theme ───────────────────────────────────────────────── */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: invert(1) sepia(1) saturate(5) hue-rotate(175deg);
+  cursor: pointer;
+  opacity: 0.7;
+}
+input[type="date"]::-webkit-calendar-picker-indicator:hover,
+input[type="time"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+
 /* ── Animations ───────────────────────────────────────────────────────────── */
 @keyframes glowPulse {
   0%, 100% {
@@ -168,6 +180,24 @@
 @keyframes backdropOut {
   from { opacity: 1; }
   to   { opacity: 0; }
+}
+
+/* ── HUD status pulse ─────────────────────────────────────────────────────── */
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+
+/* ── Floating panel entry animation ──────────────────────────────────────── */
+@keyframes panelFadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Sonar ping extended (larger radius for big visualizer) ───────────────── */
+@keyframes sonarPingBig {
+  0%   { r: 70;  opacity: 0.9; }
+  100% { r: 230; opacity: 0; }
 }
 
 /* ── Base reset ───────────────────────────────────────────────────────────── */

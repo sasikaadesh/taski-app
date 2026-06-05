@@ -10,14 +10,18 @@ import { getAllSkills, getSkill } from '../lib/skillLoader';
 import { generateWithImagen, enhanceImagePrompt, detectAspectRatio, IMAGEN_MODELS } from '../lib/imagenGenerator';
 import ImagenResultCard from './ImagenResultCard';
 import { analyzeAndPlanOrganization, groupByFolder } from '../lib/folderOrganizer';
+import WebsiteGeneratorPanel from './WebsiteGeneratorPanel';
+import { analyzePrompt } from '../lib/promptAnalyzer';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import {
   getCalendarEventsForRange,
   buildCalendarContext,
   clearToken,
   getGoogleAccessToken,
+  createCalendarEvent,
 } from '../lib/googleCalendar';
-import { searchEmails, formatEmailsForPrompt, sendEmail } from '../lib/gmail';
+import { isAuthenticated } from '../lib/googleAuth';
+import { searchEmails, formatEmailsForPrompt, sendEmail, buildQuery } from '../lib/gmail';
 import EmailConfirmationCard from './EmailConfirmationCard';
 import useChatHistory from '../hooks/useChatHistory';
 import ChatHistoryPanel from './ChatHistoryPanel';
@@ -79,6 +83,37 @@ function hasEmailReadIntent(text) {
   if (EMAIL_READ_KEYWORDS.some((kw) => lower.includes(kw))) return true;
   if (FROM_CONTEXT_RE.test(text)) return true;
   return false;
+}
+
+// ── Calendar ADD intent detection ────────────────────────────────────────────
+
+const CALENDAR_ADD_PATTERNS = [
+  /\b(add|create|schedule|put|set\s+up|book|plan)\s+(?:a\s+|an\s+)?(?:new\s+)?(?:event|meeting|appointment|reminder|call|session|lunch|dinner|breakfast|standup|sync)\b/i,
+  /\bschedule\s+(?:a\s+|an\s+)?\S/i,
+  /\bput\s+(?:it\s+)?(?:on|in)\s+(?:my\s+)?(?:calendar|schedule)\b/i,
+  /\badd\s+(?:it\s+)?(?:to|on)\s+(?:my\s+)?calendar\b/i,
+  /\bcreate\s+(?:a\s+)?(?:new\s+)?(?:event|meeting|appointment)\b/i,
+  /\bremind\s+me\s+(?:to|about|on)\s+\w/i,
+];
+
+function hasCalendarAddIntent(text) {
+  if (hasEmailSendIntent(text)) return false; // avoid conflicts with send-email patterns
+  return CALENDAR_ADD_PATTERNS.some((re) => re.test(text));
+}
+
+async function extractEventWithClaude(userMessage, todayStr) {
+  const system =
+    `You are a calendar assistant. Today is ${todayStr}.\n` +
+    `Extract event details from the user's message and return ONLY a JSON object in this exact shape:\n` +
+    `{"title":"...","date":"YYYY-MM-DD","time":"HH:MM" or null,"endTime":"HH:MM" or null}\n` +
+    `Rules: resolve relative dates (today, tomorrow, next Monday) to YYYY-MM-DD.\n` +
+    `If no time is mentioned set time to null (all-day event). If no end time, set endTime to null.\n` +
+    `Return ONLY the JSON — no markdown, no extra text.`;
+
+  const raw        = await callClaude([{ role: 'user', content: userMessage }], { system, maxTokens: 120 });
+  const jsonMatch  = raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim().match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('PARSE_FAILED');
+  return JSON.parse(jsonMatch[0]);
 }
 
 // ── Date range helpers ────────────────────────────────────────────────────────
@@ -235,12 +270,38 @@ function buildGmailQuery(text) {
   if (emailAddrMatch) {
     parts.push(`from:${emailAddrMatch[0]}`);
   } else {
-    const FROM_EXCLUDE = /^(today|yesterday|tomorrow|this|next|my|the|your|their|our|what|where|when|how|any|an|a)\b/i;
+    const FROM_EXCLUDE = /^(today|yesterday|tomorrow|this|next|my|the|your|their|our|what|where|when|how|any|an|a|new|old|recent|latest|unread|all|some|show|check|find|get|any)\b/i;
+    const SENDER_EXCLUDE = new Set(['inbox','gmail','email','mail','me','us','messages','message','emails','mails']);
+
+    // Explicit "from <name>" pattern
     const fromMatch = lower.match(/\bfrom\s+([\w.''\-]+(?:\s+[\w.''\-]+)?)/);
     if (fromMatch) {
       const candidate = fromMatch[1].trim();
-      if (!FROM_EXCLUDE.test(candidate) && !['inbox','gmail','email','mail','me','us'].includes(candidate)) {
+      if (!FROM_EXCLUDE.test(candidate) && !SENDER_EXCLUDE.has(candidate)) {
         parts.push(`from:${candidate}`);
+      }
+    }
+
+    // "<Name> emails/messages" pattern — catches "Quora emails", "LinkedIn messages"
+    if (!parts.some(p => p.startsWith('from:'))) {
+      const nameBeforeEmail = text.match(/\b([A-Za-z][a-zA-Z0-9.''\-]+(?:\s+[A-Za-z][a-zA-Z0-9.''\-]+)?)\s+(?:emails?|messages?|mails?)\b/i);
+      if (nameBeforeEmail) {
+        const candidate = nameBeforeEmail[1].trim().toLowerCase();
+        if (!FROM_EXCLUDE.test(candidate) && !SENDER_EXCLUDE.has(candidate)) {
+          parts.push(`from:${candidate}`);
+        }
+      }
+    }
+
+    // "emails/messages from <name>" without explicit "from" word already caught above
+    // Also handle: "any <Name> email", "check <Name> inbox"
+    if (!parts.some(p => p.startsWith('from:'))) {
+      const nameAfterCheck = text.match(/\b(?:any|check|show|find|get|search)\s+(?:me\s+)?([A-Za-z][a-zA-Z0-9.''\-]+(?:\s+[A-Za-z][a-zA-Z0-9.''\-]+)?)\s+(?:emails?|messages?|mails?|inbox)\b/i);
+      if (nameAfterCheck) {
+        const candidate = nameAfterCheck[1].trim().toLowerCase();
+        if (!FROM_EXCLUDE.test(candidate) && !SENDER_EXCLUDE.has(candidate)) {
+          parts.push(`from:${candidate}`);
+        }
       }
     }
   }
@@ -365,6 +426,24 @@ function getBestVoice() {
   );
 }
 
+// ── Website command detection ─────────────────────────────────────────────────
+
+const WEBSITE_NL_PATTERNS = [
+  /^(create|generate|build|make|design)\s+(a\s+|an\s+)?(website|landing\s+page|webpage|dashboard|admin\s+panel|portfolio|site)\b/i,
+];
+
+function detectWebsiteRequest(text) {
+  const trimmed = text.trim();
+  const lower   = trimmed.toLowerCase();
+  if (lower.startsWith('/website')) {
+    return trimmed.slice('/website'.length).trim();
+  }
+  for (const re of WEBSITE_NL_PATTERNS) {
+    if (re.test(trimmed)) return trimmed;
+  }
+  return null;
+}
+
 // ── Skill voice command detection ─────────────────────────────────────────────
 
 const VOICE_ACTIVATE_RE = /\b(switch\s+to|use\s+the?|activate|enable|start\s+(?:the\s+)?)\b/i;
@@ -468,6 +547,8 @@ export default function ChatBot({
   registerMicToggle,
   registerMicSupport,
   isMuted,
+  onWebsiteGenerated,
+  registerChatInsert,
 }) {
   const [messages,           setMessages]           = useState([]);
   const [input,              setInput]              = useState('');
@@ -496,6 +577,23 @@ export default function ChatBot({
   const isMutedRef = useRef(isMuted); // keep ref in sync for use inside callbacks
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
 
+  // ── External chat insert (for footer buttons) ──────────────────────────────
+  const insertTextFnRef = useRef(null);
+  insertTextFnRef.current = (text) => {
+    setInput(text);
+    setTimeout(() => inputRef.current?.focus(), 0);
+    if (text.startsWith('/')) {
+      setSkillFilter(text.slice(1).toLowerCase());
+      setShowSkillMenu(true);
+      setSkillMenuIndex(0);
+    } else {
+      setShowSkillMenu(false);
+    }
+  };
+  useEffect(() => {
+    registerChatInsert?.((text) => insertTextFnRef.current?.(text));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Voice input ───────────────────────────────────────────────────────────
   const speech = useSpeechRecognition();
 
@@ -507,6 +605,7 @@ export default function ChatBot({
   // ── Mic toggle — always-fresh via ref ─────────────────────────────────────
   const micToggleRef = useRef(null);
   micToggleRef.current = useCallback(() => {
+    if (speech.isProcessing) return;
     if (speech.isListening) {
       speech.stopListening();
     } else {
@@ -521,35 +620,40 @@ export default function ChatBot({
     registerMicToggle?.(() => micToggleRef.current?.());
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sync visualizer state with listening state
+  // Sync visualizer state with listening / processing state
   useEffect(() => {
     if (speech.isListening) {
       onVisualizerState?.('listening');
+    } else if (speech.isProcessing) {
+      onVisualizerState?.('processing');
     } else if (!loading) {
       onVisualizerState?.('idle');
     }
-  }, [speech.isListening]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [speech.isListening, speech.isProcessing]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sync live transcript → input
+  // Show interim text live (both during recording and while transcribing)
   useEffect(() => {
-    if (speech.transcript) setInput(speech.transcript);
-  }, [speech.transcript]);
+    if (speech.interimTranscript) {
+      setInput(speech.interimTranscript);
+    }
+  }, [speech.interimTranscript]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Translate speech errors → friendly messages
+  // When recording and processing are both done, commit the transcript to the input
+  useEffect(() => {
+    if (!speech.isListening && !speech.isProcessing && speech.transcript) {
+      setInput(speech.transcript);
+      speech.resetTranscript();
+    }
+  }, [speech.transcript, speech.isListening, speech.isProcessing]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Show speech errors as assistant messages
   useEffect(() => {
     if (!speech.error) return;
-    const MAP = {
-      PERMISSION_DENIED: "Microphone access was denied. Please allow it in your browser settings.",
-      NO_SPEECH:         "I did not catch that — please try again.",
-      NETWORK:           "Voice input requires an internet connection.",
-      UNKNOWN:           "Voice input encountered an error. Please try again.",
-    };
     setMessages((prev) => [
       ...prev,
-      { role: 'assistant', content: MAP[speech.error] ?? MAP.UNKNOWN },
+      { role: 'assistant', content: speech.error },
     ].slice(-MAX_MESSAGES));
     setInput('');
-    speech.clearError();
   }, [speech.error]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keyboard shortcut: Ctrl+Shift+V
@@ -621,6 +725,16 @@ export default function ChatBot({
   // ── Skill helpers ─────────────────────────────────────────────────────────
 
   function activateSkill(skill) {
+    // /website is a panel feature, not a text-skill — open the generator
+    if (skill.trigger === '/website') {
+      setShowSkillMenu(false);
+      setInput('');
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: '[website-generator]', meta: { type: 'website-generator', prefillPrompt: '' } },
+      ].slice(-MAX_MESSAGES));
+      return;
+    }
     setActiveSkill(skill);
     setShowSkillMenu(false);
     setInput('');
@@ -838,6 +952,42 @@ export default function ChatBot({
         return;
       }
 
+      // /website command — shows analysis message then opens the generator panel
+      const websiteInlinePrompt = detectWebsiteRequest(text.trim());
+      if (websiteInlinePrompt !== null) {
+        const panelMsg = {
+          role:    'assistant',
+          content: '[website-generator]',
+          meta:    { type: 'website-generator', prefillPrompt: websiteInlinePrompt },
+        };
+
+        if (websiteInlinePrompt) {
+          const wa = analyzePrompt(websiteInlinePrompt);
+          const featureHints = [
+            wa.features.wantsCharts    ? 'Charts included.' : '',
+            wa.brandName               ? `Using brand name: ${wa.brandName}.` : '',
+          ].filter(Boolean).join(' ');
+          const analysisMsg = [
+            `I'll create a ${wa.layoutType} for you.`,
+            `Detected: ${wa.theme} theme, ${wa.colors.accent1} accent, ${wa.visualStyle} style.`,
+            featureHints,
+            'Opening the website generator now...',
+          ].filter(Boolean).join('\n');
+
+          setMessages((prev) => [
+            ...prev,
+            { role: 'assistant', content: analysisMsg },
+            panelMsg,
+          ].slice(-MAX_MESSAGES));
+        } else {
+          setMessages((prev) => [...prev, panelMsg].slice(-MAX_MESSAGES));
+        }
+
+        setLoading(false);
+        onVisualizerState?.('idle');
+        return;
+      }
+
       const exactSkill = getSkill(trimmed);
       if (exactSkill) {
         activateSkill(exactSkill);
@@ -880,6 +1030,18 @@ export default function ChatBot({
       timeZone: timezone, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
     });
     const timeStr = now.toLocaleTimeString('en-US', { timeZone: timezone, timeStyle: 'short' });
+
+    // Debug logging — detect which intents fire
+    const _calDet = hasCalendarIntent(text);
+    const _emlDet = hasEmailReadIntent(text);
+    const _sndDet = hasEmailSendIntent(text);
+    console.log('TASKI Chat Debug:', {
+      message: text,
+      isCalendarQuery: _calDet,
+      isEmailReadQuery: _emlDet,
+      isEmailSendQuery: _sndDet,
+    });
+
     const dateContext =
       `Today is ${todayStr}. Current time is ${timeStr}. ` +
       `User's timezone is ${timezone}.\n` +
@@ -1079,6 +1241,52 @@ export default function ChatBot({
     }
 
     // ════════════════════════════════════════════════════════════════════════
+    // BRANCH 2.3 — Calendar ADD intent (create a new event)
+    // ════════════════════════════════════════════════════════════════════════
+    if (hasCalendarAddIntent(text)) {
+      if (!isAuthenticated()) {
+        const reply = "To add events to Google Calendar, please click the **CAL** button in the footer to connect your Google account first.";
+        setMessages((prev) => [...prev, { role: 'assistant', content: reply }].slice(-MAX_MESSAGES));
+        speakText(reply);
+        setLoading(false);
+        onVisualizerState?.('idle');
+        return;
+      }
+
+      try {
+        const details = await extractEventWithClaude(text, todayStr);
+        if (!details?.title || !details?.date) throw new Error('PARSE_FAILED');
+
+        await createCalendarEvent({
+          title:   details.title,
+          date:    details.date,
+          time:    details.time    ?? null,
+          endTime: details.endTime ?? null,
+        });
+
+        const displayDate = new Date(`${details.date}T12:00:00`).toLocaleDateString('en-US', {
+          weekday: 'long', month: 'long', day: 'numeric',
+        });
+        const displayTime = details.time
+          ? ` at ${new Date(`${details.date}T${details.time}:00`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+          : '';
+        const reply = `Done. "${details.title}" has been added to your Google Calendar for ${displayDate}${displayTime}.`;
+        setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { checked: 'calendar' } }].slice(-MAX_MESSAGES));
+        speakText(reply);
+      } catch (err) {
+        const msg = err.message === 'PARSE_FAILED'
+          ? 'I could not understand the event details. Try something like: "Schedule a team meeting tomorrow at 2pm".'
+          : `I could not create the event: ${err.message}`;
+        setMessages((prev) => [...prev, { role: 'assistant', content: msg }].slice(-MAX_MESSAGES));
+        speakText(msg);
+      }
+
+      setLoading(false);
+      onVisualizerState?.('idle');
+      return;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
     // BRANCH 2.5 — Folder organize intent (Electron only)
     // ════════════════════════════════════════════════════════════════════════
     if (hasFolderIntent(text)) {
@@ -1159,6 +1367,17 @@ export default function ChatBot({
       const wantsCalendar = hasCalendarIntent(text);
       const wantsEmail    = hasEmailReadIntent(text);
 
+      // Guard: if Google data is needed but user isn't connected, tell them to use the footer.
+      // Never trigger an auth popup from the chatbot — only the footer buttons do that.
+      if ((wantsCalendar || wantsEmail) && !isAuthenticated()) {
+        const reply = "To access your Google Calendar or Gmail, please click the **CAL** or **GMAIL** button in the footer to connect your Google account first. It only takes a moment!";
+        setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { checked: null } }].slice(-MAX_MESSAGES));
+        speakText(reply);
+        setLoading(false);
+        onVisualizerState?.('idle');
+        return;
+      }
+
       if (wantsCalendar || wantsEmail) {
         const calendarPromise = wantsCalendar
           ? (async () => {
@@ -1170,7 +1389,7 @@ export default function ChatBot({
 
         const emailPromise = wantsEmail
           ? (async () => {
-              const query  = buildGmailQuery(text);
+              const query  = buildQuery(text);
               const emails = await searchEmails(query);
               return { block: formatEmailsForPrompt(emails, query), query };
             })()
@@ -1338,6 +1557,55 @@ export default function ChatBot({
           flexShrink:   0,
         }}
       >
+        {viewingPast ? (
+          /* ── Past-session header ── */
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+            <button
+              onClick={() => { setMessages([]); setViewingPast(null); sessionIdRef.current = chatHistory.startNewSession(); }}
+              style={{
+                display:       'flex',
+                alignItems:    'center',
+                gap:           '4px',
+                padding:       '4px 10px',
+                border:        '1px solid rgba(0,212,255,0.3)',
+                borderRadius:  '4px',
+                color:         '#00d4ff',
+                fontFamily:    "'Rajdhani', sans-serif",
+                fontSize:      '11px',
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                cursor:        'pointer',
+                background:    'transparent',
+                transition:    'all 0.2s',
+                flexShrink:    0,
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,212,255,0.1)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              ← BACK
+            </button>
+            <div style={{
+              flex:          1,
+              fontFamily:    "'Rajdhani', sans-serif",
+              fontSize:      '11px',
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              color:         'rgba(0,212,255,0.5)',
+              textAlign:     'center',
+            }}>
+              PAST CHAT · {new Date(viewingPast.startedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            </div>
+            <button
+              onClick={() => setHistoryOpen(true)}
+              aria-label="View chat history"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-secondary)', padding: '4px', display: 'flex', alignItems: 'center', flexShrink: 0, transition: 'color 200ms' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-neon-cyan)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+            >
+              <Clock size={16} aria-hidden="true" />
+            </button>
+          </div>
+        ) : (
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div
@@ -1442,6 +1710,7 @@ export default function ChatBot({
             <Clock size={16} aria-hidden="true" />
           </button>
         </div>
+        )}
       </div>
 
       {/* ── Messages area ── */}
@@ -1620,6 +1889,19 @@ export default function ChatBot({
                   aspectRatio={msg.meta.aspectRatio}
                   fallbackUsed={msg.meta.fallbackUsed ?? false}
                   onRegenerate={(p, m) => handleImageRegeneration(msg.meta.requestId, p, m)}
+                />
+              </div>
+
+            ) : msg.meta?.type === 'website-generator' ? (
+              /* ── Website generator panel ── */
+              <div style={{ width: '100%' }}>
+                <WebsiteGeneratorPanel
+                  prefillPrompt={msg.meta.prefillPrompt}
+                  onGenerate={(html, prompt) => {
+                    onWebsiteGenerated?.({ html, prompt, id: `website_${Date.now()}` });
+                    const doneMsg = 'Your website is ready. It features GSAP scroll animations and professional design patterns. Use the viewport buttons to preview on mobile, or download the HTML file.';
+                    speakText(doneMsg);
+                  }}
                 />
               </div>
 
@@ -1833,50 +2115,25 @@ export default function ChatBot({
           </div>
         )}
 
-        {/* Listening indicator */}
+        {/* Recording indicator */}
         {speech.isListening && (
-          <div
-            style={{
-              display:      'flex',
-              alignItems:   'center',
-              gap:          '5px',
-              marginBottom: '8px',
-              paddingLeft:  '2px',
-            }}
-          >
-            <span
-              style={{
-                color:     'var(--color-danger)',
-                fontSize:  '9px',
-                animation: 'recordPulse 1s ease-in-out infinite',
-                lineHeight: 1,
-              }}
-              aria-hidden="true"
-            >
-              ●
+          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '8px', paddingLeft: '2px' }}>
+            <span style={{ color: 'var(--color-danger)', fontSize: '9px', animation: 'recordPulse 0.8s ease-in-out infinite', lineHeight: 1 }} aria-hidden="true">●</span>
+            <span style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: '10px', fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--color-danger)' }}>
+              RECORDING... click ⏹ to stop
             </span>
-            <span
-              style={{
-                fontFamily:    "'Rajdhani', sans-serif",
-                fontSize:      '10px',
-                fontWeight:    600,
-                letterSpacing: '0.14em',
-                textTransform: 'uppercase',
-                color:         'var(--color-danger)',
-              }}
-            >
-              Listening…
+            <span style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: '9px', letterSpacing: '0.06em', color: 'rgba(0,212,255,0.35)', marginLeft: '6px' }}>
+              auto-stops at 15s
             </span>
-            <span
-              style={{
-                fontFamily:    "'Rajdhani', sans-serif",
-                fontSize:      '9px',
-                letterSpacing: '0.06em',
-                color:         'rgba(0,212,255,0.35)',
-                marginLeft:    '6px',
-              }}
-            >
-              Ctrl+Shift+V to stop
+          </div>
+        )}
+
+        {/* Transcribing indicator */}
+        {speech.isProcessing && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '8px', paddingLeft: '2px' }}>
+            <span style={{ color: '#ffaa00', fontSize: '9px', animation: 'recordPulse 0.5s ease-in-out infinite', lineHeight: 1 }} aria-hidden="true">●</span>
+            <span style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: '10px', fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#ffaa00' }}>
+              ⏳ TRANSCRIBING WITH CLAUDE AI...
             </span>
           </div>
         )}
@@ -1884,46 +2141,71 @@ export default function ChatBot({
         {/* Row: [Mic] [input] [Send] */}
         <div style={{ display: 'flex', gap: '8px' }}>
 
-          {/* Mic button */}
+          {/* Mic button — 3 states: idle / recording (cyan) / transcribing (amber) */}
           {speech.isSupported && (
             <button
               type="button"
               onClick={() => micToggleRef.current?.()}
-              aria-label={speech.isListening ? 'Stop voice input' : 'Start voice input'}
+              disabled={speech.isProcessing}
+              aria-label={speech.isProcessing ? 'Transcribing…' : speech.isListening ? 'Stop recording' : 'Start voice input'}
               aria-pressed={speech.isListening}
+              title={speech.isProcessing ? 'Transcribing…' : speech.isListening ? 'Click to stop recording' : 'Click to speak (Ctrl+Shift+V)'}
               style={{
-                background:     'transparent',
-                border:         speech.isListening
-                  ? '1px solid #00d4ff'
-                  : '1px solid rgba(0,212,255,0.2)',
+                background:     speech.isProcessing
+                  ? 'rgba(255,170,0,0.1)'
+                  : speech.isListening
+                    ? 'rgba(0,212,255,0.1)'
+                    : 'transparent',
+                border:         speech.isProcessing
+                  ? '1px solid #ffaa00'
+                  : speech.isListening
+                    ? '1px solid #00d4ff'
+                    : '1px solid rgba(0,212,255,0.2)',
                 borderRadius:   '4px',
                 padding:        '0 10px',
-                color:          speech.isListening ? '#00d4ff' : 'rgba(0,212,255,0.45)',
-                cursor:         'pointer',
+                color:          speech.isProcessing
+                  ? '#ffaa00'
+                  : speech.isListening
+                    ? '#00d4ff'
+                    : 'rgba(0,212,255,0.45)',
+                cursor:         speech.isProcessing ? 'wait' : 'pointer',
                 display:        'flex',
                 alignItems:     'center',
                 justifyContent: 'center',
                 minWidth:       '40px',
                 height:         '40px',
-                animation:      speech.isListening ? 'glowPulse 1.5s ease-in-out infinite' : 'none',
-                boxShadow:      speech.isListening ? '0 0 10px rgba(0,212,255,0.35)' : 'none',
+                fontSize:       '15px',
+                animation:      speech.isProcessing
+                  ? 'glowPulse 0.5s ease-in-out infinite'
+                  : speech.isListening
+                    ? 'glowPulse 1.5s ease-in-out infinite'
+                    : 'none',
+                boxShadow:      speech.isProcessing
+                  ? '0 0 10px rgba(255,170,0,0.3)'
+                  : speech.isListening
+                    ? '0 0 10px rgba(0,212,255,0.35)'
+                    : 'none',
                 transition:     'all 200ms ease',
                 flexShrink:     0,
               }}
               onMouseEnter={(e) => {
-                if (!speech.isListening) {
+                if (!speech.isListening && !speech.isProcessing) {
                   e.currentTarget.style.color       = '#00d4ff';
                   e.currentTarget.style.borderColor = 'rgba(0,212,255,0.5)';
                 }
               }}
               onMouseLeave={(e) => {
-                if (!speech.isListening) {
+                if (!speech.isListening && !speech.isProcessing) {
                   e.currentTarget.style.color       = 'rgba(0,212,255,0.45)';
                   e.currentTarget.style.borderColor = 'rgba(0,212,255,0.2)';
                 }
               }}
             >
-              <Mic size={15} aria-hidden="true" />
+              {speech.isProcessing
+                ? '⏳'
+                : speech.isListening
+                  ? '⏹'
+                  : <Mic size={15} aria-hidden="true" />}
             </button>
           )}
 
@@ -1932,8 +2214,9 @@ export default function ChatBot({
             ref={inputRef}
             type="text"
             placeholder={
-              speech.isListening  ? 'Listening — speak now…'    :
-              pendingEmailContext  ? 'Enter email address…'       :
+              speech.isProcessing  ? 'Transcribing your speech…'           :
+              speech.isListening   ? 'Recording — click ⏹ to stop…'        :
+              pendingEmailContext  ? 'Enter email address…'                 :
                                     'Ask TASKI anything… (type / for skills)'
             }
             value={input}
@@ -1957,9 +2240,11 @@ export default function ChatBot({
             style={{
               flex:          1,
               background:    'var(--color-bg-raised)',
-              border:        speech.isListening
-                ? '1px solid rgba(0,212,255,0.4)'
-                : '1px solid rgba(0,212,255,0.15)',
+              border:        speech.isProcessing
+                ? '1px solid rgba(255,170,0,0.4)'
+                : speech.isListening
+                  ? '1px solid rgba(0,212,255,0.4)'
+                  : '1px solid rgba(0,212,255,0.15)',
               borderRadius:  '4px',
               padding:       '0 12px',
               height:        '40px',
@@ -1971,9 +2256,11 @@ export default function ChatBot({
               caretColor:    '#00d4ff',
               transition:    'border-color 200ms, box-shadow 200ms',
               opacity:       loading ? 0.5 : 1,
-              boxShadow:     speech.isListening
-                ? '0 0 0 3px rgba(0,212,255,0.1)'
-                : 'none',
+              boxShadow:     speech.isProcessing
+                ? '0 0 0 3px rgba(255,170,0,0.1)'
+                : speech.isListening
+                  ? '0 0 0 3px rgba(0,212,255,0.1)'
+                  : 'none',
             }}
             onFocus={(e) => {
               if (!speech.isListening) {

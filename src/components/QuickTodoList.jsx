@@ -28,7 +28,7 @@ const PRIORITY_COLORS = {
   low:    'var(--color-success)',
 };
 
-export default function QuickTodoList({ onCountChange }) {
+export default function QuickTodoList({ onCountChange, showForm = true }) {
   const [todos,        setTodos]        = useState([]);
   const [newTitle,     setNewTitle]     = useState('');
   const [newDate,      setNewDate]      = useState('tomorrow');
@@ -129,10 +129,10 @@ export default function QuickTodoList({ onCountChange }) {
   const canAdd       = newTitle.trim().length > 0;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
 
-      {/* ── Add form ─────────────────────────────── */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      {/* ── Add form — never scrolls ─────────────── */}
+      {showForm && <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '8px', padding: '8px 10px', borderBottom: '1px solid rgba(0,212,255,0.1)' }}>
 
         {/* Title input */}
         <input
@@ -343,62 +343,64 @@ export default function QuickTodoList({ onCountChange }) {
         >
           + ADD TODO
         </button>
+      </div>}
+
+      {/* ── Todo list — scrollable ───────────────── */}
+      <div className="todo-list-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', minHeight: 0, padding: '4px 10px' }}>
+        {activeTodos.length === 0 && doneTodos.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '16px 0' }}>
+            <p style={{
+              fontFamily:    "'Rajdhani', sans-serif",
+              fontSize:      '12px',
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+              color:         'var(--color-text-dim)',
+              margin:        0,
+              lineHeight:    1.7,
+            }}>
+              NO TODOS YET<br />
+              Add tasks for tomorrow<br />
+              or the coming week
+            </p>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '4px' }}>
+
+            {tomorrowList.length > 0 && (
+              <TodoGroup title="TOMORROW" count={tomorrowList.length} todos={tomorrowList} onComplete={handleComplete} onDelete={handleDelete} />
+            )}
+
+            {thisWeekList.length > 0 && (
+              <TodoGroup title="THIS WEEK" count={thisWeekList.length} todos={thisWeekList} onComplete={handleComplete} onDelete={handleDelete} />
+            )}
+
+            {doneTodos.length > 0 && (
+              <>
+                <button
+                  onClick={() => setShowDone(v => !v)}
+                  style={{
+                    background:    'none',
+                    border:        'none',
+                    cursor:        'pointer',
+                    fontFamily:    "'Rajdhani', sans-serif",
+                    fontSize:      '11px',
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                    color:         'var(--color-text-dim)',
+                    padding:       '4px 0',
+                    textAlign:     'left',
+                  }}
+                >
+                  {showDone ? '[ HIDE COMPLETED ]' : `[ SHOW ${doneTodos.length} COMPLETED ]`}
+                </button>
+                {showDone && doneTodos.map(t => (
+                  <TodoItem key={t.id} todo={t} onComplete={handleComplete} onDelete={handleDelete} />
+                ))}
+              </>
+            )}
+          </div>
+        )}
       </div>
-
-      {/* ── Todo list ─────────────────────────────── */}
-      {activeTodos.length === 0 && doneTodos.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '16px 0' }}>
-          <p style={{
-            fontFamily:    "'Rajdhani', sans-serif",
-            fontSize:      '12px',
-            letterSpacing: '0.08em',
-            textTransform: 'uppercase',
-            color:         'var(--color-text-dim)',
-            margin:        0,
-            lineHeight:    1.7,
-          }}>
-            NO TODOS YET<br />
-            Add tasks for tomorrow<br />
-            or the coming week
-          </p>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-
-          {tomorrowList.length > 0 && (
-            <TodoGroup title="TOMORROW" count={tomorrowList.length} todos={tomorrowList} onComplete={handleComplete} onDelete={handleDelete} />
-          )}
-
-          {thisWeekList.length > 0 && (
-            <TodoGroup title="THIS WEEK" count={thisWeekList.length} todos={thisWeekList} onComplete={handleComplete} onDelete={handleDelete} />
-          )}
-
-          {doneTodos.length > 0 && (
-            <>
-              <button
-                onClick={() => setShowDone(v => !v)}
-                style={{
-                  background:    'none',
-                  border:        'none',
-                  cursor:        'pointer',
-                  fontFamily:    "'Rajdhani', sans-serif",
-                  fontSize:      '11px',
-                  letterSpacing: '0.08em',
-                  textTransform: 'uppercase',
-                  color:         'var(--color-text-dim)',
-                  padding:       '4px 0',
-                  textAlign:     'left',
-                }}
-              >
-                {showDone ? '[ HIDE COMPLETED ]' : `[ SHOW ${doneTodos.length} COMPLETED ]`}
-              </button>
-              {showDone && doneTodos.map(t => (
-                <TodoItem key={t.id} todo={t} onComplete={handleComplete} onDelete={handleDelete} />
-              ))}
-            </>
-          )}
-        </div>
-      )}
     </div>
   );
 }

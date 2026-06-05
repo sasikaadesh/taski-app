@@ -1,168 +1,324 @@
-// useSpeechRecognition — browser Web Speech API wrapper. No external API or key needed.
-// Falls back gracefully when the API is not available (e.g. Firefox, Safari < 14.1).
+// useSpeechRecognition — MediaRecorder-based voice capture with Whisper (primary) and Claude (fallback) transcription.
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react'
 
-// ── Configuration ─────────────────────────────────────────────────────────────
-// Change SPEECH_LANG to support other locales (e.g. 'en-GB', 'fr-FR', 'es-ES').
-const SPEECH_LANG = 'en-US';
-
-// Resolve browser-vendor prefix.  Chrome ships it as webkitSpeechRecognition.
-const SpeechRecognitionAPI =
-  (typeof window !== 'undefined' &&
-    (window.SpeechRecognition || window.webkitSpeechRecognition)) ||
-  null;
-
-// ── Hook ──────────────────────────────────────────────────────────────────────
-
-/**
- * useSpeechRecognition()
- *
- * Exposes:
- *   isListening  {boolean}     — true while the mic is open
- *   transcript   {string}      — live / final recognised text (resets on startListening)
- *   isSupported  {boolean}     — false when the browser has no SpeechRecognition
- *   error        {string|null} — typed error code, or null
- *
- * Error codes:
- *   'PERMISSION_DENIED' — user or OS blocked the microphone
- *   'NO_SPEECH'         — silence was detected during the session
- *   'NETWORK'           — the cloud speech service could not be reached
- *   'UNKNOWN'           — any other error
- *
- * Functions:
- *   startListening()  — clears transcript, requests mic, begins recognition
- *   stopListening()   — stops immediately (finalises current interim result)
- *   resetTranscript() — clears transcript to ''
- *   clearError()      — resets error to null (so the same error can re-fire)
- */
 export function useSpeechRecognition() {
-  const [isListening, setIsListening] = useState(false);
-  const [transcript,  setTranscript]  = useState('');
-  const [error,       setError]       = useState(null);
+  const [isListening, setIsListening] = useState(false)
+  const [transcript, setTranscript] = useState('')
+  const [interimTranscript, setInterimTranscript] = useState('')
+  const [isSupported, setIsSupported] = useState(false)
+  const [error, setError] = useState(null)
+  const [isProcessing, setIsProcessing] = useState(false)
 
-  const recognitionRef = useRef(null);
-  const isSupported    = Boolean(SpeechRecognitionAPI);
+  const mediaRecorderRef = useRef(null)
+  const audioChunksRef = useRef([])
+  const streamRef = useRef(null)
+  const maxTimerRef = useRef(null)
 
-  // ── Build recognition instance once on mount ────────────────────────────────
   useEffect(() => {
-    if (!isSupported) return;
+    const supported = !!(
+      navigator.mediaDevices?.getUserMedia &&
+      window.MediaRecorder
+    )
+    setIsSupported(supported)
+    console.log('[Taski Voice] Ready. Supported:', supported)
+  }, [])
 
-    const recognition = new SpeechRecognitionAPI();
+  useEffect(() => {
+    return () => stopAll()
+  }, [])
 
-    // continuous = false  → auto-stops after the first utterance / silence gap.
-    // This gives the simplest UX: speak → stop → text appears → send.
-    recognition.continuous     = false;
-    recognition.interimResults = true;   // surface partial results in real time
-    recognition.lang           = SPEECH_LANG;
+  function stopAll() {
+    if (maxTimerRef.current) {
+      clearTimeout(maxTimerRef.current)
+      maxTimerRef.current = null
+    }
+    if (mediaRecorderRef.current?.state === 'recording') {
+      try { mediaRecorderRef.current.stop() } catch (e) {}
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop())
+      streamRef.current = null
+    }
+  }
 
-    // ── onresult: fired repeatedly as words come in ──────────────────────────
-    recognition.onresult = (event) => {
-      let finalText   = '';
-      let interimText = '';
+  async function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        const base64 = reader.result.split(',')[1]
+        resolve(base64)
+      }
+      reader.onerror = reject
+      reader.readAsDataURL(blob)
+    })
+  }
 
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const piece = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalText   += piece;
-        } else {
-          interimText += piece;
+  async function transcribeWithWhisper(blob) {
+    const apiKey = import.meta.env.VITE_OPENAI_API_KEY
+    if (!apiKey) return null
+
+    console.log('[Taski Voice] Using Whisper...')
+
+    const formData = new FormData()
+    formData.append('file', blob, 'audio.webm')
+    formData.append('model', 'whisper-1')
+    formData.append('language', 'en')
+    formData.append('response_format', 'text')
+
+    const res = await fetch(
+      'https://api.openai.com/v1/audio/transcriptions',
+      {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + apiKey },
+        body: formData
+      }
+    )
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      console.error('[Taski Voice] Whisper error:', err)
+      return null
+    }
+
+    const text = await res.text()
+    return text?.trim() || ''
+  }
+
+  async function transcribeWithClaude(blob) {
+    const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY
+    if (!apiKey) return null
+
+    console.log('[Taski Voice] Using Claude...')
+
+    try {
+      const base64 = await blobToBase64(blob)
+      const mimeType = blob.type || 'audio/webm'
+
+      const res = await fetch(
+        'https://api.anthropic.com/v1/messages',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true'
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 500,
+            messages: [{
+              role: 'user',
+              content: [
+                {
+                  type: 'audio',
+                  source: {
+                    type: 'base64',
+                    media_type: mimeType,
+                    data: base64
+                  }
+                },
+                {
+                  type: 'text',
+                  text: 'Transcribe this audio exactly. Return ONLY the spoken words. If nothing was spoken return: EMPTY'
+                }
+              ]
+            }]
+          })
+        }
+      )
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        console.warn('[Taski Voice] Claude audio error:', err.error?.message)
+        return null
+      }
+
+      const data = await res.json()
+      const text = data.content?.[0]?.text?.trim()
+      if (!text || text === 'EMPTY') return ''
+      return text
+
+    } catch (e) {
+      console.warn('[Taski Voice] Claude failed:', e.message)
+      return null
+    }
+  }
+
+  async function transcribe(blob) {
+    console.log('[Taski Voice] Audio:', Math.round(blob.size / 1024) + 'KB', blob.type)
+
+    const whisperResult = await transcribeWithWhisper(blob).catch(() => null)
+    if (whisperResult !== null) {
+      console.log('[Taski Voice] Whisper result:', whisperResult)
+      return whisperResult
+    }
+
+    const claudeResult = await transcribeWithClaude(blob).catch(() => null)
+    if (claudeResult !== null) {
+      console.log('[Taski Voice] Claude result:', claudeResult)
+      return claudeResult
+    }
+
+    throw new Error(
+      'Transcription unavailable. ' +
+      'Add VITE_OPENAI_API_KEY to .env for reliable voice input.'
+    )
+  }
+
+  const startListening = useCallback(async () => {
+    if (isListening || isProcessing) return
+
+    setError(null)
+    setTranscript('')
+    setInterimTranscript('')
+    audioChunksRef.current = []
+
+    try {
+      console.log('[Taski Voice] Requesting mic...')
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: 16000,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      })
+
+      streamRef.current = stream
+      console.log('[Taski Voice] Mic granted')
+
+      const mimeType = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/mp4',
+        ''
+      ].find(t => !t || MediaRecorder.isTypeSupported(t)) || ''
+
+      console.log('[Taski Voice] Format:', mimeType || 'default')
+
+      const recorder = new MediaRecorder(
+        stream,
+        mimeType ? { mimeType } : {}
+      )
+
+      recorder.ondataavailable = (e) => {
+        if (e.data?.size > 0) {
+          audioChunksRef.current.push(e.data)
         }
       }
 
-      // Prefer the final result; fall back to the latest interim fragment.
-      setTranscript(finalText || interimText);
-    };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop())
 
-    // ── onend: fires when the session ends (naturally or via stop/abort) ─────
-    recognition.onend = () => {
-      setIsListening(false);
-    };
+        const chunks = [...audioChunksRef.current]
+        audioChunksRef.current = []
 
-    // ── onerror: translate Web Speech error strings to our typed codes ───────
-    recognition.onerror = (event) => {
-      setIsListening(false);
+        if (chunks.length === 0) {
+          setIsListening(false)
+          setIsProcessing(false)
+          return
+        }
 
-      switch (event.error) {
-        case 'not-allowed':
-        case 'permission-denied':
-          setError('PERMISSION_DENIED');
-          break;
+        setIsListening(false)
+        setIsProcessing(true)
+        setInterimTranscript('Transcribing...')
 
-        case 'no-speech':
-          setError('NO_SPEECH');
-          break;
+        try {
+          const blob = new Blob(chunks, { type: mimeType || 'audio/webm' })
+          const text = await transcribe(blob)
+          setInterimTranscript('')
 
-        case 'network':
-          setError('NETWORK');
-          break;
-
-        case 'aborted':
-          // User cancelled — not an error worth surfacing to the UI.
-          break;
-
-        default:
-          setError('UNKNOWN');
+          if (text && text.length > 0) {
+            setTranscript(text)
+          } else {
+            setError('No speech detected. Please speak clearly and try again.')
+            setTimeout(() => setError(null), 3000)
+          }
+        } catch (err) {
+          console.error('[Taski Voice]', err.message)
+          setInterimTranscript('')
+          setError(err.message || 'Transcription failed. Try again.')
+          setTimeout(() => setError(null), 5000)
+        } finally {
+          setIsProcessing(false)
+        }
       }
-    };
 
-    recognitionRef.current = recognition;
+      recorder.onerror = (e) => {
+        console.error('[Taski Voice] Recorder:', e)
+        setIsListening(false)
+        setIsProcessing(false)
+        setError('Recording error. Please retry.')
+        setTimeout(() => setError(null), 3000)
+        stopAll()
+      }
 
-    // Cleanup: remove handlers then abort any ongoing session on unmount.
-    return () => {
-      recognition.onresult = null;
-      recognition.onend    = null;
-      recognition.onerror  = null;
-      try { recognition.abort(); } catch { /* ignore if already stopped */ }
-    };
-  // isSupported is a constant derived from window — safe to list once.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+      mediaRecorderRef.current = recorder
+      recorder.start(250)
+      setIsListening(true)
+      console.log('[Taski Voice] Recording...')
 
-  // ── Public API ────────────────────────────────────────────────────────────
+      maxTimerRef.current = setTimeout(() => {
+        if (mediaRecorderRef.current?.state === 'recording') {
+          mediaRecorderRef.current.stop()
+        }
+      }, 15000)
 
-  const startListening = useCallback(() => {
-    if (!isSupported || isListening) return;
-    setTranscript('');
-    setError(null);
-    try {
-      recognitionRef.current?.start();
-      setIsListening(true);
     } catch (err) {
-      // InvalidStateError if already running — shouldn't happen due to the
-      // isListening guard above, but be safe.
-      if (import.meta.env.DEV) {
-        console.warn('[useSpeechRecognition] start() threw:', err);
+      console.error('[Taski Voice]', err.name, err.message)
+      setIsListening(false)
+      setIsProcessing(false)
+
+      switch (err.name) {
+        case 'NotAllowedError':
+        case 'PermissionDeniedError':
+          setError('Microphone blocked. Allow microphone access in Electron settings.')
+          break
+        case 'NotFoundError':
+          setError('No microphone detected.')
+          break
+        case 'NotReadableError':
+          setError('Microphone busy. Close other apps.')
+          break
+        default:
+          setError('Microphone error: ' + err.message)
       }
+      setTimeout(() => setError(null), 5000)
     }
-  }, [isSupported, isListening]);
+  }, [isListening, isProcessing])
 
   const stopListening = useCallback(() => {
-    if (!isListening) return;
-    try {
-      // stop() finalises the current result; abort() would discard it.
-      recognitionRef.current?.stop();
-    } catch { /* ignore */ }
-    // Don't call setIsListening(false) here — wait for the onend event so
-    // the final transcript has time to land before we drop the listening state.
-  }, [isListening]);
+    if (maxTimerRef.current) {
+      clearTimeout(maxTimerRef.current)
+      maxTimerRef.current = null
+    }
+    if (mediaRecorderRef.current?.state === 'recording') {
+      mediaRecorderRef.current.stop()
+    } else {
+      setIsListening(false)
+    }
+  }, [])
 
   const resetTranscript = useCallback(() => {
-    setTranscript('');
-  }, []);
-
-  const clearError = useCallback(() => {
-    setError(null);
-  }, []);
+    setTranscript('')
+    setInterimTranscript('')
+  }, [])
 
   return {
     isListening,
     transcript,
+    interimTranscript,
     isSupported,
     error,
+    isProcessing,
+    isTranscribing: isProcessing,
     startListening,
     stopListening,
-    resetTranscript,
-    clearError,
-  };
+    resetTranscript
+  }
 }

@@ -1,7 +1,4 @@
-// App — root layout: three-zone Jarvis interface.
-// LEFT: TASKI branding + accordion sections (add task, calendar tasks, quick todos, file organizer).
-// CENTER: JarvisVisualizer animated SVG.
-// RIGHT: ChatBot full-height panel.
+// App — HUD overlay layout: circuit background · central visualizer · floating panels · header/footer.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import TodoForm         from './components/TodoForm';
@@ -10,13 +7,13 @@ import ChatBot          from './components/ChatBot';
 import FolderOrganizer  from './components/FolderOrganizer';
 import JarvisVisualizer from './components/JarvisVisualizer';
 import StartupOverlay   from './components/StartupOverlay';
-import DateTimeGadget   from './components/DateTimeGadget';
-import LocationGadget   from './components/LocationGadget';
-import MusicControls    from './components/MusicControls';
 import HelpModal        from './components/HelpModal';
-import AccordionSection from './components/AccordionSection';
+import WebsitePreview   from './components/WebsitePreview';
 import QuickTodoList    from './components/QuickTodoList';
-import { HelpCircle }   from 'lucide-react';
+import FloatingPanel    from './components/FloatingPanel';
+import CircuitBackground from './components/CircuitBackground';
+import HudHeader        from './components/HudHeader';
+import HudFooter        from './components/HudFooter';
 import { createCalendarEvent } from './lib/googleCalendar';
 import {
   startAmbient,
@@ -27,8 +24,8 @@ import {
   restoreAmbient,
 } from './lib/ambientSound';
 
-const STORAGE_KEY    = 'taski-todos';
-const STARTUP_FLAG   = 'taski-startup-done';
+const STORAGE_KEY  = 'taski-todos';
+const STARTUP_FLAG = 'taski-startup-done';
 
 function loadTodosSync() {
   try {
@@ -42,7 +39,6 @@ export default function App() {
   const [todos, setTodos] = useState(loadTodosSync);
   const todosReady = useRef(false);
 
-  // On mount: load from file (Electron) and mark ready
   useEffect(() => {
     async function init() {
       if (window.taskiAPI?.isElectron) {
@@ -54,7 +50,6 @@ export default function App() {
     init();
   }, []);
 
-  // Persist todos whenever they change (after initial load)
   useEffect(() => {
     if (!todosReady.current) return;
     if (window.taskiAPI?.isElectron) {
@@ -66,6 +61,7 @@ export default function App() {
 
   function handleAdd(todo) {
     setTodos((prev) => [todo, ...prev]);
+    setCalendarFormOpen(false);
     if (todo.date) {
       createCalendarEvent(todo)
         .then(() =>
@@ -78,9 +74,7 @@ export default function App() {
   }
 
   function handleToggle(id) {
-    setTodos((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t))
-    );
+    setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
   }
 
   function handleDelete(id) {
@@ -89,40 +83,34 @@ export default function App() {
 
   const pending   = todos.filter((t) => !t.done);
   const completed = todos.filter((t) => t.done);
-
-  // Quick todo count for accordion badge
   const [quickTodoCount, setQuickTodoCount] = useState(0);
 
   // ── Jarvis state ──────────────────────────────────────────────────────────
   const [visualizerState, setVisualizerState] = useState('idle');
-  const [isMuted, setIsMuted]                 = useState(false);
+  const [isMuted,         setIsMuted]         = useState(false);
+  const micToggleRef  = useRef(null);
+  const registerMicToggle = useCallback((fn) => { micToggleRef.current = fn; }, []);
+  const handleMicClick    = useCallback(() => { micToggleRef.current?.(); }, []);
 
-  // micToggleRef is populated by ChatBot on mount so the visualizer can trigger it
-  const micToggleRef = useRef(null);
-  const registerMicToggle = useCallback((fn) => {
-    micToggleRef.current = fn;
-  }, []);
+  // ── Chat insert (for footer buttons) ────────────────────────────────────────
+  const chatInsertRef = useRef(null);
+  const registerChatInsert = useCallback((fn) => { chatInsertRef.current = fn; }, []);
+  const [isMicSupported, setIsMicSupported] = useState(true);
+  const registerMicSupport = useCallback((supported) => { setIsMicSupported(supported); }, []);
 
-  const handleMicClick = useCallback(() => {
-    micToggleRef.current?.();
-  }, []);
-
-  // ── Startup animation (once per session) ──────────────────────────────────
+  // ── Startup ───────────────────────────────────────────────────────────────
   const [startupDone, setStartupDone] = useState(() =>
     Boolean(sessionStorage.getItem(STARTUP_FLAG))
   );
-
   function handleStartupDone() {
     sessionStorage.setItem(STARTUP_FLAG, '1');
     setStartupDone(true);
   }
 
-  // ── Ambient music state ───────────────────────────────────────────────────
+  // ── Ambient music ─────────────────────────────────────────────────────────
   const [isAmbientPlaying, setIsAmbientPlaying] = useState(true);
-  const [ambientVolume,    setAmbientVolumeState] = useState(40); // 0–100
+  const [ambientVolume,    setAmbientVolumeState] = useState(40);
 
-  // Attempt autoplay immediately; re-attempt on first interaction as fallback
-  // (browsers may block autoplay until the user has interacted with the page)
   useEffect(() => {
     startAmbient();
     const resume = () => startAmbient();
@@ -136,7 +124,6 @@ export default function App() {
     };
   }, []);
 
-  // Duck / restore ambient music based on visualizer state
   useEffect(() => {
     if (!isAmbientPlaying) return;
     if (visualizerState === 'listening' || visualizerState === 'processing') {
@@ -149,541 +136,409 @@ export default function App() {
   }, [visualizerState, isAmbientPlaying]);
 
   function toggleAmbient() {
-    if (isAmbientPlaying) {
-      stopAmbient();
-      setIsAmbientPlaying(false);
-    } else {
-      startAmbient();
-      setIsAmbientPlaying(true);
-    }
+    if (isAmbientPlaying) { stopAmbient(); setIsAmbientPlaying(false); }
+    else                  { startAmbient(); setIsAmbientPlaying(true); }
   }
-
   function handleAmbientVolume(val) {
     setAmbientVolumeState(val);
     setAmbientVolume(val / 100);
   }
 
-  // ── Help modal ────────────────────────────────────────────────────────────
-  const [helpModalOpen, setHelpModalOpen] = useState(false);
+  // ── UI modals + toggles ───────────────────────────────────────────────────
+  const [helpModalOpen,     setHelpModalOpen]     = useState(false);
+  const [websitePreviewData, setWebsitePreviewData] = useState(null);
+  const [calendarFormOpen,   setCalendarFormOpen]   = useState(false);
+  const [folderOrgOpen,      setFolderOrgOpen]      = useState(false);
+  const [chatMinimized,      setChatMinimized]       = useState(false);
+  const [quickTodoFormOpen,  setQuickTodoFormOpen]  = useState(false);
 
-  // ── Responsive: mobile todo sidebar ──────────────────────────────────────
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-
-  // ── isMicSupported (queried from ChatBot via a registered callback) ───────
-  const [isMicSupported, setIsMicSupported] = useState(true);
-  const registerMicSupport = useCallback((supported) => {
-    setIsMicSupported(supported);
+  // ── Fullscreen change → force layout recalc ──────────────────────────────
+  useEffect(() => {
+    if (window.taskiAPI?.onFullscreenChange) {
+      window.taskiAPI.onFullscreenChange(() => {
+        window.dispatchEvent(new Event('resize'));
+      });
+    }
   }, []);
 
   return (
-    <>
-      {/* ── Startup overlay (plays once per session) ── */}
+    <div style={{
+      display:        'flex',
+      flexDirection:  'column',
+      height:         '100vh',
+      width:          '100vw',
+      overflow:       'hidden',
+      position:       'relative',
+    }}>
       {!startupDone && (
         <StartupOverlay onDone={handleStartupDone} isMuted={isMuted} />
       )}
 
-      {/* ── Three-zone layout ── */}
-      <div
-        style={{
-          display:       'flex',
-          height:        '100svh',
-          overflow:      'hidden',
-          position:      'relative',
-        }}
-      >
+      {/* ════ HUD Header — flex item, never clips in fullscreen ════ */}
+      <HudHeader
+        isAmbientPlaying={isAmbientPlaying}
+        ambientVolume={ambientVolume}
+        onAmbientToggle={toggleAmbient}
+        onVolumeChange={handleAmbientVolume}
+        onHelp={() => setHelpModalOpen(true)}
+      />
 
-        {/* ════════════════════════════════════════
-            LEFT ZONE — branding + todos
-        ════════════════════════════════════════ */}
+      {/* ════ Content area — fills space between header and footer ════ */}
+      <div style={{ flex: 1, position: 'relative', overflow: 'hidden', minHeight: 0 }}>
+
+        {/* ── Background layer ── */}
+        <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 0 }}>
+          <CircuitBackground />
+          <div aria-hidden="true" style={{
+            position: 'absolute', inset: 0, pointerEvents: 'none',
+            background: 'radial-gradient(ellipse 60% 60% at 50% 50%, rgba(0,100,200,0.08) 0%, transparent 70%)',
+          }} />
+          <div aria-hidden="true" style={{
+            position: 'absolute', inset: 0, pointerEvents: 'none',
+            background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.025) 2px, rgba(0,0,0,0.025) 4px)',
+          }} />
+        </div>
+
+        {/* ── Visualizer (behind panels, above background) ── */}
         <div
-          className="left-zone"
+          aria-label="TASKI central visualizer"
           style={{
-            width:         '30%',
-            minWidth:      '280px',
-            flexShrink:    0,
+            position:      'absolute',
+            top:           '50%',
+            left:          '50%',
+            transform:     'translate(-50%, -50%)',
+            zIndex:        2,
+            pointerEvents: 'none',
             display:       'flex',
             flexDirection: 'column',
-            borderRight:   '1px solid rgba(0,212,255,0.15)',
-            overflow:      'hidden',
+            alignItems:    'center',
           }}
         >
-          {/* Brand header */}
-          <div
-            style={{
-              padding:      '24px 24px 16px',
-              borderBottom: '1px solid rgba(0,212,255,0.1)',
-              flexShrink:   0,
-              background:   'rgba(0,212,255,0.02)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              {/* Logo + title */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                {/* Tron T icon */}
-                <div
-                  style={{
-                    width:          '32px',
-                    height:         '32px',
-                    border:         '1px solid #00d4ff',
-                    borderRadius:   '3px',
-                    display:        'flex',
-                    alignItems:     'center',
-                    justifyContent: 'center',
-                    boxShadow:      '0 0 14px rgba(0,212,255,0.3), inset 0 0 10px rgba(0,212,255,0.05)',
-                    flexShrink:     0,
-                  }}
-                >
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                    <rect x="1" y="2" width="14" height="2" fill="#00d4ff"/>
-                    <rect x="6.5" y="4" width="3" height="10" fill="#00d4ff"/>
-                  </svg>
-                </div>
-
-                <div>
-                  <h1
-                    style={{
-                      fontFamily:    "'Orbitron', sans-serif",
-                      fontSize:      '22px',
-                      fontWeight:    700,
-                      letterSpacing: '0.1em',
-                      color:         '#00d4ff',
-                      textShadow:    '0 0 20px rgba(0,212,255,0.8)',
-                      margin:        0,
-                      lineHeight:    1,
-                    }}
-                  >
-                    TASKI
-                  </h1>
-                  <p
-                    style={{
-                      fontFamily:    "'Rajdhani', sans-serif",
-                      fontSize:      '10px',
-                      letterSpacing: '0.12em',
-                      color:         'rgba(0,212,255,0.45)',
-                      textTransform: 'uppercase',
-                      margin:        '3px 0 0',
-                      lineHeight:    1,
-                    }}
-                  >
-                    Smart Scheduling
-                  </p>
-                </div>
-              </div>
-
-              {/* Help button */}
-              <HelpButton onClick={() => setHelpModalOpen(true)} />
-            </div>
-
-            {/* Stats row */}
-            <div style={{ display: 'flex', gap: '8px', marginTop: '14px' }}>
-              <span
-                style={{
-                  fontFamily:    "'Rajdhani', sans-serif",
-                  fontSize:      '10px',
-                  fontWeight:    500,
-                  letterSpacing: '0.1em',
-                  textTransform: 'uppercase',
-                  padding:       '2px 10px',
-                  borderRadius:  '100px',
-                  background:    'rgba(0,212,255,0.08)',
-                  border:        '1px solid rgba(0,212,255,0.25)',
-                  color:         '#00d4ff',
-                }}
-              >
-                {pending.length} pending
-              </span>
-              {completed.length > 0 && (
-                <span
-                  style={{
-                    fontFamily:    "'Rajdhani', sans-serif",
-                    fontSize:      '10px',
-                    fontWeight:    500,
-                    letterSpacing: '0.1em',
-                    textTransform: 'uppercase',
-                    padding:       '2px 10px',
-                    borderRadius:  '100px',
-                    background:    'rgba(0,255,136,0.06)',
-                    border:        '1px solid rgba(0,255,136,0.25)',
-                    color:         '#00ff88',
-                  }}
-                >
-                  {completed.length} done
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Scrollable accordion sections */}
-          <div
-            className="left-panel-scroll"
-            style={{
-              flex:          1,
-              overflowY:     'auto',
-              padding:       '12px 14px 24px',
-              display:       'flex',
-              flexDirection: 'column',
-            }}
-          >
-            {/* Section 1: Add a Task */}
-            <AccordionSection title="ADD A TASK" icon="📅" defaultOpen={false} storageKey="add-task">
-              <TodoForm onAdd={handleAdd} />
-            </AccordionSection>
-
-            {/* Section 2: Calendar Tasks */}
-            <AccordionSection
-              title="CALENDAR TASKS"
-              icon="🗓"
-              badge={pending.length}
-              defaultOpen={false}
-              storageKey="calendar-tasks"
-            >
-              {pending.length > 0 && (
-                <section style={{ marginBottom: completed.length > 0 ? '12px' : 0 }}>
-                  <h2 style={{
-                    fontFamily:    "'Rajdhani', sans-serif",
-                    fontSize:      '10px',
-                    fontWeight:    500,
-                    letterSpacing: '0.14em',
-                    textTransform: 'uppercase',
-                    color:         'rgba(74,155,190,0.7)',
-                    margin:        '0 0 8px',
-                  }}>
-                    Pending · {pending.length}
-                  </h2>
-                  <TodoList todos={pending} onToggle={handleToggle} onDelete={handleDelete} />
-                </section>
-              )}
-              {completed.length > 0 && (
-                <section>
-                  <h2 style={{
-                    fontFamily:    "'Rajdhani', sans-serif",
-                    fontSize:      '10px',
-                    fontWeight:    500,
-                    letterSpacing: '0.14em',
-                    textTransform: 'uppercase',
-                    color:         'rgba(74,155,190,0.7)',
-                    margin:        '0 0 8px',
-                  }}>
-                    Completed · {completed.length}
-                  </h2>
-                  <TodoList todos={completed} onToggle={handleToggle} onDelete={handleDelete} />
-                </section>
-              )}
-              {todos.length === 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '20px 0', gap: '10px' }}>
-                  <svg width="36" height="36" viewBox="0 0 44 44" fill="none" aria-hidden="true">
-                    <rect x="1" y="1" width="42" height="42" rx="3" stroke="rgba(0,212,255,0.15)" strokeWidth="1"/>
-                    <rect x="7" y="13" width="30" height="1" fill="rgba(0,212,255,0.12)"/>
-                    <rect x="7" y="21" width="30" height="1" fill="rgba(0,212,255,0.12)"/>
-                    <rect x="7" y="29" width="30" height="1" fill="rgba(0,212,255,0.12)"/>
-                    <rect x="7" y="11" width="3" height="3" fill="rgba(0,212,255,0.25)"/>
-                    <rect x="7" y="19" width="3" height="3" fill="rgba(0,212,255,0.25)"/>
-                    <rect x="7" y="27" width="3" height="3" fill="rgba(0,212,255,0.25)"/>
-                  </svg>
-                  <p style={{
-                    fontFamily:    "'Rajdhani', sans-serif",
-                    fontSize:      '11px',
-                    letterSpacing: '0.08em',
-                    textTransform: 'uppercase',
-                    color:         'rgba(30,77,107,0.9)',
-                    margin:        0,
-                    textAlign:     'center',
-                  }}>
-                    No calendar tasks yet
-                  </p>
-                </div>
-              )}
-            </AccordionSection>
-
-            {/* Section 3: Quick To Do List — NEW */}
-            <AccordionSection
-              title="TO DO LIST"
-              icon="✓"
-              badge={quickTodoCount}
-              defaultOpen={true}
-              storageKey="todo-list"
-            >
-              <QuickTodoList onCountChange={setQuickTodoCount} />
-            </AccordionSection>
-
-            {/* Section 4: File Organizer */}
-            <AccordionSection title="FILE ORGANIZER" icon="📁" defaultOpen={false} storageKey="file-organizer">
-              <FolderOrganizer />
-            </AccordionSection>
-          </div>
+          <JarvisVisualizer
+            state={visualizerState}
+            onMicClick={handleMicClick}
+            isMuted={isMuted}
+            onMuteToggle={() => setIsMuted((m) => !m)}
+            isSupported={isMicSupported}
+          />
         </div>
 
-        {/* ════════════════════════════════════════
-            CENTER ZONE — Jarvis visualizer + gadgets
-        ════════════════════════════════════════ */}
-        <div
-          className="center-zone"
-          style={{
-            flex:      1,
-            display:   'flex',
-            flexDirection: 'column',
-            position:  'relative',
-            overflow:  'hidden',
-          }}
-        >
-          {/* Background scan-line effect */}
-          <div
-            aria-hidden="true"
-            style={{
-              position:      'absolute',
-              inset:         0,
-              background:    'linear-gradient(to bottom, transparent 40%, rgba(0,212,255,0.015) 50%, transparent 60%)',
-              animation:     'scanLine 6s ease-in-out infinite',
-              pointerEvents: 'none',
-              zIndex:        0,
-            }}
-          />
+        {/* ── Left Upper Panel — Calendar Tasks ── */}
+        <div style={{
+          position:  'absolute',
+          top:       '10px',
+          left:      '16px',
+          width:     '380px',
+          zIndex:    10,
+          animation: 'panelFadeIn 0.3s ease',
+        }}>
+          <FloatingPanel
+            title="CALENDAR TASKS"
+            icon="🗓"
+            badge={pending.length || undefined}
+            headerActions={
+              <ToggleAddBtn
+                open={calendarFormOpen}
+                onClick={() => setCalendarFormOpen((v) => !v)}
+              />
+            }
+          >
+            {/* Collapsible add form */}
+            <div style={{
+              overflow:   'hidden',
+              maxHeight:  calendarFormOpen ? '280px' : '0',
+              transition: 'max-height 300ms ease',
+              flexShrink: 0,
+            }}>
+              <div style={{ padding: '8px 12px 6px', borderBottom: '1px solid rgba(0,212,255,0.08)' }}>
+                <TodoForm onAdd={handleAdd} />
+              </div>
+            </div>
 
-          {/* Scrollable inner column */}
-          <div
-            style={{
-              position:       'relative',
-              zIndex:         1,
-              flex:           1,
-              overflowY:      'auto',
+            {/* Task list — scrolls when content overflows */}
+            <div
+              className="task-list panel-scroll"
+              style={{
+                maxHeight:  calendarFormOpen ? '0' : 'calc(45vh - 60px)',
+                overflowY:  'auto',
+                overflowX:  'hidden',
+                minHeight:  0,
+                padding:    calendarFormOpen ? '0' : '8px 10px',
+                transition: 'max-height 300ms ease, padding 300ms ease',
+              }}
+            >
+              {pending.length > 0 ? (
+                <>
+                  <SectionLabel>Pending · {pending.length}</SectionLabel>
+                  <TodoList todos={pending} onToggle={handleToggle} onDelete={handleDelete} />
+                </>
+              ) : null}
+              {completed.length > 0 ? (
+                <>
+                  <SectionLabel>Done · {completed.length}</SectionLabel>
+                  <TodoList todos={completed} onToggle={handleToggle} onDelete={handleDelete} />
+                </>
+              ) : null}
+              {todos.length === 0 && (
+                <EmptyState text="No calendar tasks yet" />
+              )}
+            </div>
+          </FloatingPanel>
+        </div>
+
+        {/* ── Left Lower Panel — To Do List ── */}
+        <div style={{
+          position:  'absolute',
+          bottom:    '10px',
+          left:      '16px',
+          width:     '380px',
+          zIndex:    10,
+          animation: 'panelFadeIn 0.3s ease 0.1s both',
+        }}>
+          <FloatingPanel
+            title="TO DO LIST"
+            icon="✓"
+            badge={quickTodoCount || undefined}
+            headerActions={
+              <ToggleAddBtn
+                open={quickTodoFormOpen}
+                onClick={() => setQuickTodoFormOpen((v) => !v)}
+              />
+            }
+          >
+            <div style={{
               display:        'flex',
               flexDirection:  'column',
-              alignItems:     'center',
-              padding:        '32px 24px 40px',
-              gap:            0,
-            }}
-          >
-            {/* Visualizer */}
-            <JarvisVisualizer
-              state={visualizerState}
-              onMicClick={handleMicClick}
-              isMuted={isMuted}
-              onMuteToggle={() => setIsMuted((m) => !m)}
-              isSupported={isMicSupported}
-            />
+              maxHeight:      'calc(45vh - 60px)',
+              overflow:       'hidden',
+            }}>
+              <QuickTodoList onCountChange={setQuickTodoCount} showForm={quickTodoFormOpen} />
+            </div>
+          </FloatingPanel>
+        </div>
 
-            {/* Gap between visualizer and DateTime */}
-            <div style={{ height: '32px', flexShrink: 0 }} />
-
-            {/* DateTime gadget (includes its own top + bottom dividers) */}
-            <DateTimeGadget />
-
-            {/* Gap + Location gadget */}
-            <div style={{ height: '24px', flexShrink: 0 }} />
-            <LocationGadget />
-
-            {/* Dashed divider before music controls */}
-            <div style={{ height: '24px', flexShrink: 0 }} />
-            <div
-              aria-hidden="true"
+        {/* ── Right Panel — Chat ── */}
+        <div style={{
+          position:     'absolute',
+          top:          '10px',
+          right:        '16px',
+          width:        '340px',
+          height:       chatMinimized ? '44px' : 'calc(100% - 20px)',
+          zIndex:       10,
+          borderRadius: '12px',
+          overflow:     'hidden',
+          border:       '1px solid rgba(0,212,255,0.22)',
+          boxShadow:
+            '0 0 0 1px rgba(0,212,255,0.08), 0 8px 32px rgba(0,0,0,0.65), inset 0 1px 0 rgba(0,212,255,0.1)',
+          background:   'rgba(2, 15, 35, 0.82)',
+          backdropFilter: 'blur(20px)',
+          WebkitBackdropFilter: 'blur(20px)',
+          transition:   'height 300ms ease',
+          animation:    'panelFadeIn 0.3s ease 0.05s both',
+        }}>
+          <div aria-hidden="true" style={{
+            position: 'absolute', top: 0, left: '5%', width: '90%', height: '1px', zIndex: 1,
+            background: 'linear-gradient(90deg,transparent,rgba(0,212,255,0.8) 30%,rgba(0,212,255,1) 50%,rgba(0,212,255,0.8) 70%,transparent)',
+          }} />
+          {chatMinimized ? (
+            <button
+              onClick={() => setChatMinimized(false)}
               style={{
-                width:     '80%',
-                borderTop: '1px dashed rgba(0,212,255,0.2)',
-                marginBottom: '20px',
+                width: '100%', height: '44px', background: 'none', border: 'none',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px',
+                padding: '0 14px',
               }}
-            />
+            >
+              <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#00d4ff', boxShadow: '0 0 6px #00d4ff', animation: 'statusPulse 2s ease-in-out infinite' }} />
+              <span style={{ fontFamily: "'Orbitron'", fontSize: '12px', letterSpacing: '0.12em', color: '#00d4ff' }}>TASKI · ONLINE</span>
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={() => setChatMinimized(true)}
+                aria-label="Minimize chat"
+                style={{
+                  position: 'absolute', top: '10px', right: '10px', zIndex: 10,
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'rgba(0,212,255,0.4)', fontSize: '16px', lineHeight: 1, padding: '2px 6px',
+                  transition: 'color 150ms',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = '#00d4ff'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(0,212,255,0.4)'; }}
+              >
+                –
+              </button>
+              <ChatBot
+                onVisualizerState={setVisualizerState}
+                registerMicToggle={registerMicToggle}
+                registerMicSupport={registerMicSupport}
+                isMuted={isMuted}
+                onWebsiteGenerated={setWebsitePreviewData}
+                registerChatInsert={registerChatInsert}
+              />
+            </>
+          )}
+        </div>
 
-            {/* Ambient music controls */}
-            <MusicControls
-              playing={isAmbientPlaying}
-              volume={ambientVolume}
-              onToggle={toggleAmbient}
-              onVolumeChange={handleAmbientVolume}
-            />
+      </div>{/* end content area */}
+
+      {/* ════ HUD Footer — flex item, always visible in fullscreen ════ */}
+      <HudFooter
+        onFiles={() => setFolderOrgOpen(true)}
+        onImagen={() => chatInsertRef.current?.('/imagen ')}
+        onWebsite={() => chatInsertRef.current?.('/website ')}
+        onSkills={() => chatInsertRef.current?.('/')}
+        visualizerState={visualizerState}
+      />
+
+      {/* ════ Folder Organizer Modal ════ */}
+      {folderOrgOpen && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 200,
+            background: 'rgba(0,0,0,0.8)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '24px',
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) setFolderOrgOpen(false); }}
+        >
+          <div style={{
+            width: '600px', maxWidth: '90vw', maxHeight: '80vh',
+            background: 'rgba(2,15,35,0.95)',
+            border: '1px solid rgba(0,212,255,0.3)',
+            borderRadius: '12px',
+            overflow: 'hidden',
+            boxShadow: '0 0 60px rgba(0,212,255,0.15)',
+            display: 'flex', flexDirection: 'column',
+            animation: 'modalFlashIn 0.3s ease',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid rgba(0,212,255,0.12)', background: 'rgba(0,212,255,0.04)' }}>
+              <span style={{ fontFamily: "'Rajdhani'", fontSize: '11px', fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#00d4ff' }}>📁 FILE ORGANIZER</span>
+              <button onClick={() => setFolderOrgOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(0,212,255,0.5)', fontSize: '18px', lineHeight: 1, padding: '0 4px' }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = '#ff2d55'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(0,212,255,0.5)'; }}
+              >×</button>
+            </div>
+            <div style={{ flex: 1, overflow: 'auto' }}>
+              <FolderOrganizer />
+            </div>
           </div>
         </div>
+      )}
 
-        {/* ════════════════════════════════════════
-            RIGHT ZONE — ChatBot panel
-        ════════════════════════════════════════ */}
-        <div
-          className="right-zone"
-          style={{
-            width:       '35%',
-            minWidth:    '300px',
-            maxWidth:    '480px',
-            flexShrink:  0,
-            borderLeft:  '1px solid rgba(0,212,255,0.15)',
-            display:     'flex',
-            flexDirection: 'column',
-            overflow:    'hidden',
-          }}
-        >
-          <ChatBot
-            onVisualizerState={setVisualizerState}
-            registerMicToggle={registerMicToggle}
-            registerMicSupport={registerMicSupport}
-            isMuted={isMuted}
-          />
-        </div>
-      </div>
+      {/* ════ Help Modal ════ */}
+      <HelpModal isOpen={helpModalOpen} onClose={() => setHelpModalOpen(false)} />
 
-      {/* ── Left panel scrollbar (Tron thin style) ── */}
-      <style>{`
-        .left-panel-scroll {
-          scrollbar-width: thin;
-          scrollbar-color: rgba(0,212,255,0.2) transparent;
-        }
-        .left-panel-scroll::-webkit-scrollbar { width: 4px; }
-        .left-panel-scroll::-webkit-scrollbar-track { background: transparent; }
-        .left-panel-scroll::-webkit-scrollbar-thumb {
-          background: rgba(0,212,255,0.2);
-          border-radius: 2px;
-        }
-        .left-panel-scroll::-webkit-scrollbar-thumb:hover {
-          background: rgba(0,212,255,0.4);
-        }
-      `}</style>
-
-      {/* ── Responsive: mobile todo toggle button ── */}
-      <style>{`
-        @media (max-width: 900px) {
-          .left-zone {
-            position: fixed !important;
-            top: 0;
-            left: ${sidebarOpen ? '0' : '-100%'};
-            height: 100svh;
-            width: 85% !important;
-            min-width: unset !important;
-            max-width: 360px;
-            z-index: 200;
-            background: var(--color-bg-base);
-            transition: left 300ms ease;
-            border-right: 1px solid rgba(0,212,255,0.25) !important;
-          }
-          .center-zone {
-            display: flex !important;
-            width: 100% !important;
-            flex: 1 !important;
-          }
-          .right-zone {
-            position: fixed !important;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            height: 45svh;
-            width: 100% !important;
-            min-width: unset !important;
-            max-width: unset !important;
-            border-left: none !important;
-            border-top: 1px solid rgba(0,212,255,0.2);
-            z-index: 100;
-          }
-        }
-      `}</style>
-
-      {/* Mobile sidebar toggle */}
-      <button
-        className="mobile-todo-btn"
-        onClick={() => setSidebarOpen((v) => !v)}
-        aria-label={sidebarOpen ? 'Close task panel' : 'Open task panel'}
-        style={{
-          display:        'none',
-          position:       'fixed',
-          top:            '12px',
-          left:           '12px',
-          zIndex:         300,
-          background:     'rgba(0,212,255,0.08)',
-          border:         '1px solid rgba(0,212,255,0.4)',
-          borderRadius:   '6px',
-          padding:        '8px 12px',
-          color:          '#00d4ff',
-          fontFamily:     "'Rajdhani', sans-serif",
-          fontSize:       '12px',
-          letterSpacing:  '0.1em',
-          textTransform:  'uppercase',
-          cursor:         'pointer',
-        }}
-      >
-        {sidebarOpen ? '✕ Close' : '☰ Tasks'}
-      </button>
-      <style>{`
-        @media (max-width: 900px) {
-          .mobile-todo-btn { display: block !important; }
-        }
-      `}</style>
-
-      {/* Mobile sidebar backdrop */}
-      {sidebarOpen && (
-        <div
-          aria-hidden="true"
-          onClick={() => setSidebarOpen(false)}
-          style={{
-            display:    'none',
-            position:   'fixed',
-            inset:      0,
-            background: 'rgba(0,0,0,0.6)',
-            zIndex:     150,
-          }}
-          className="sidebar-backdrop"
+      {/* ════ Website Preview ════ */}
+      {websitePreviewData && (
+        <WebsitePreview
+          htmlContent={websitePreviewData.html}
+          prompt={websitePreviewData.prompt}
+          onClose={() => setWebsitePreviewData(null)}
+          onRegenerate={() => setWebsitePreviewData(null)}
         />
       )}
-      <style>{`
-        @media (max-width: 900px) {
-          .sidebar-backdrop { display: block !important; }
-        }
-      `}</style>
 
-      {/* Help modal — rendered at root level so it overlays everything */}
-      <HelpModal isOpen={helpModalOpen} onClose={() => setHelpModalOpen(false)} />
-    </>
+      {/* ── Panel scrollbar styles ── */}
+      <style>{`
+        .panel-scroll,
+        .task-list,
+        .todo-list-scroll {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(0,212,255,0.25) transparent;
+        }
+        .panel-scroll::-webkit-scrollbar,
+        .task-list::-webkit-scrollbar,
+        .todo-list-scroll::-webkit-scrollbar { width: 3px; }
+        .panel-scroll::-webkit-scrollbar-track,
+        .task-list::-webkit-scrollbar-track,
+        .todo-list-scroll::-webkit-scrollbar-track { background: transparent; }
+        .panel-scroll::-webkit-scrollbar-thumb,
+        .task-list::-webkit-scrollbar-thumb,
+        .todo-list-scroll::-webkit-scrollbar-thumb { background: rgba(0,212,255,0.25); border-radius: 2px; }
+        .panel-scroll::-webkit-scrollbar-thumb:hover,
+        .task-list::-webkit-scrollbar-thumb:hover,
+        .todo-list-scroll::-webkit-scrollbar-thumb:hover { background: rgba(0,212,255,0.5); }
+      `}</style>
+    </div>
   );
 }
 
-// ── Help icon button ──────────────────────────────────────────────────────────
+// ── Small helper components ────────────────────────────────────────────────────
 
-function HelpButton({ onClick }) {
-  const [hovered, setHovered] = useState(false);
+function ToggleAddBtn({ open, onClick }) {
   return (
-    <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-      {hovered && (
-        <span
-          style={{
-            position:      'absolute',
-            bottom:        '100%',
-            left:          '50%',
-            transform:     'translateX(-50%)',
-            marginBottom:  '6px',
-            fontFamily:    "'Rajdhani', sans-serif",
-            fontSize:      '10px',
-            fontWeight:    600,
-            letterSpacing: '0.1em',
-            textTransform: 'uppercase',
-            color:         'var(--color-neon-cyan)',
-            background:    'var(--color-bg-overlay)',
-            border:        '1px solid var(--color-border)',
-            borderRadius:  '3px',
-            padding:       '2px 8px',
-            whiteSpace:    'nowrap',
-            pointerEvents: 'none',
-          }}
-        >
-          HELP
-        </span>
-      )}
-      <button
-        onClick={onClick}
-        aria-label="Open help"
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        style={{
-          width:        '32px',
-          height:       '32px',
-          borderRadius: '50%',
-          border:       '1px solid var(--color-border)',
-          background:   hovered ? 'var(--color-bg-raised)' : 'transparent',
-          color:        hovered ? 'var(--color-neon-cyan)' : 'var(--color-text-secondary)',
-          display:      'flex',
-          alignItems:   'center',
-          justifyContent: 'center',
-          cursor:       'pointer',
-          boxShadow:    hovered ? '0 0 12px rgba(0,212,255,0.5)' : 'none',
-          transition:   'all 200ms ease-in-out',
-          flexShrink:   0,
-        }}
-      >
-        <HelpCircle size={16} aria-hidden="true" />
-      </button>
+    <button
+      onClick={onClick}
+      aria-label={open ? 'Close add form' : 'Add new task'}
+      style={{
+        width:          '22px',
+        height:         '22px',
+        borderRadius:   '50%',
+        border:         '1px solid rgba(0,212,255,0.5)',
+        background:     open ? 'rgba(0,212,255,0.15)' : 'transparent',
+        color:          '#00d4ff',
+        fontSize:       '14px',
+        lineHeight:     1,
+        cursor:         'pointer',
+        display:        'flex',
+        alignItems:     'center',
+        justifyContent: 'center',
+        transition:     'all 150ms ease',
+        flexShrink:     0,
+        fontFamily:     'monospace',
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background='rgba(0,212,255,0.2)'; e.currentTarget.style.boxShadow='0 0 8px rgba(0,212,255,0.4)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background=open ? 'rgba(0,212,255,0.15)' : 'transparent'; e.currentTarget.style.boxShadow='none'; }}
+    >
+      {open ? '×' : '+'}
+    </button>
+  );
+}
+
+function SectionLabel({ children }) {
+  return (
+    <div style={{
+      fontFamily:    "'Rajdhani', sans-serif",
+      fontSize:      '9px',
+      fontWeight:    600,
+      letterSpacing: '0.14em',
+      textTransform: 'uppercase',
+      color:         'rgba(74,155,190,0.6)',
+      margin:        '6px 0 5px 2px',
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function EmptyState({ text }) {
+  return (
+    <div style={{
+      display:        'flex',
+      flexDirection:  'column',
+      alignItems:     'center',
+      padding:        '20px 0',
+      gap:            '8px',
+    }}>
+      <svg width="30" height="30" viewBox="0 0 44 44" fill="none" aria-hidden="true">
+        <rect x="1" y="1" width="42" height="42" rx="3" stroke="rgba(0,212,255,0.12)" strokeWidth="1"/>
+        <rect x="7" y="13" width="30" height="1" fill="rgba(0,212,255,0.1)"/>
+        <rect x="7" y="21" width="30" height="1" fill="rgba(0,212,255,0.1)"/>
+        <rect x="7" y="29" width="30" height="1" fill="rgba(0,212,255,0.1)"/>
+      </svg>
+      <p style={{
+        fontFamily:    "'Rajdhani', sans-serif",
+        fontSize:      '10px',
+        letterSpacing: '0.08em',
+        textTransform: 'uppercase',
+        color:         'rgba(30,77,107,0.8)',
+        margin:        0,
+        textAlign:     'center',
+      }}>
+        {text}
+      </p>
     </div>
   );
 }

@@ -3,6 +3,12 @@
 
 const SKILLS = [
   {
+    name: 'UI/UX Pro Max Website Generator',
+    trigger: '/website',
+    description: 'Generate stunning animated websites and dashboards',
+    prompt: '',
+  },
+  {
     name: 'Imagen 4 Image Generator',
     trigger: '/imagen',
     description: 'Generate images using Google Imagen 4',

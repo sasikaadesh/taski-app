@@ -1,6 +1,6 @@
 // Electron main process — app window + all IPC file-system handlers.
 
-const { app, BrowserWindow, ipcMain, dialog, Notification } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, Notification, session, shell } = require('electron')
 const path = require('path')
 const fs   = require('fs')
 
@@ -30,10 +30,20 @@ function createWindow() {
     minHeight: 800,
     backgroundColor: '#050a0e',
     webPreferences: {
-      preload:          path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration:  false,
+      preload:                     path.join(__dirname, 'preload.cjs'),
+      contextIsolation:            true,
+      nodeIntegration:             false,
+      webSecurity:                 false,
+      allowRunningInsecureContent: true,
+      experimentalFeatures:        true,
     },
+  })
+
+  win.on('enter-full-screen', () => {
+    win.webContents.send('fullscreen-changed', true)
+  })
+  win.on('leave-full-screen', () => {
+    win.webContents.send('fullscreen-changed', false)
   })
 
   if (isDev) {
@@ -42,11 +52,62 @@ function createWindow() {
     win.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 
+  // Electron reports navigator.onLine as false even with real internet, which
+  // causes Chrome's Web Speech API to throw a spurious 'network' error.
+  // Override it so the browser always sees itself as online.
+  win.webContents.on('did-finish-load', () => {
+    win.webContents.executeJavaScript(`
+      Object.defineProperty(navigator, 'onLine', {
+        get: function() { return true; },
+        configurable: true
+      });
+    `).catch(() => {});
+  })
+
   return win
 }
 
 app.whenReady().then(() => {
-  createWindow()
+  // Allow all content in iframes (CDN scripts, fonts, etc.)
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;",
+        ],
+      },
+    })
+  })
+
+  // Allow microphone / media permissions (required for Web Speech API in Electron)
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowed = ['media', 'microphone', 'audioCapture', 'mediaKeySystem']
+    callback(allowed.includes(permission))
+  })
+
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    const allowed = ['media', 'microphone', 'audioCapture']
+    return allowed.includes(permission)
+  })
+
+  // Spoof Origin header so Google's speech endpoint accepts the request from Electron
+  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    callback({
+      requestHeaders: {
+        ...details.requestHeaders,
+        'Origin': 'https://www.google.com',
+      },
+    })
+  })
+
+  const mainWindow = createWindow()
+
+  // Also grant permissions on the window's own session (belt-and-suspenders)
+  mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    callback(true)
+  })
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
@@ -398,6 +459,232 @@ ipcMain.handle('chats-export-txt', async (_event, sessionId, text) => {
     fs.writeFileSync(filePath, text)
     return { success: true, path: filePath }
   } catch (e) { return { success: false, error: e.message } }
+})
+
+// ── IPC: download-website ─────────────────────────────────────────────────────
+
+ipcMain.handle('download-website', async (_event, { html, projectName, singleFile }) => {
+  const safeName = (projectName || 'taski-website')
+    .replace(/[^a-z0-9\s-]/gi, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .toLowerCase() || 'taski-website'
+
+  if (singleFile) {
+    // Save as a single self-contained HTML file — open in any browser, no setup needed
+    const { filePath, canceled } = await dialog.showSaveDialog({
+      title:       'Save Website',
+      defaultPath: safeName + '.html',
+      buttonLabel: 'Save HTML',
+      filters:     [{ name: 'HTML File', extensions: ['html'] }],
+    })
+    if (canceled || !filePath) return { canceled: true }
+    fs.writeFileSync(filePath, html, 'utf-8')
+    return { success: true, path: filePath }
+  }
+
+  // Multi-file project folder (legacy / multi-page support)
+  const { filePath, canceled } = await dialog.showSaveDialog({
+    title:       'Save Website Project Folder',
+    defaultPath: safeName,
+    buttonLabel: 'Save Project',
+    properties:  ['createDirectory'],
+  })
+  if (canceled || !filePath) return { canceled: true }
+
+  const projectDir = filePath
+  fs.mkdirSync(projectDir, { recursive: true })
+  fs.writeFileSync(path.join(projectDir, 'index.html'), html, 'utf-8')
+  fs.writeFileSync(path.join(projectDir, 'README.md'),
+    `# ${projectName || 'Taski Website'}\n\nGenerated by Taski UI/UX Pro Max · Powered by Claude AI + GSAP\n\n## Quick Open\n\nDouble-click **index.html** to open in any browser — no build step needed.\n\n## Deploy\n\nDrop the index.html file onto any web host (Netlify, Vercel, GitHub Pages).\n`)
+
+  return { success: true, path: projectDir }
+})
+
+// ── IPC: window fullscreen ────────────────────────────────────────────────────
+
+ipcMain.handle('window-fullscreen', () => {
+  const win = BrowserWindow.getFocusedWindow()
+  if (win) win.setFullScreen(true)
+})
+
+ipcMain.handle('window-restore', () => {
+  const win = BrowserWindow.getFocusedWindow()
+  if (win) {
+    win.setFullScreen(false)
+    win.restore()
+  }
+})
+
+ipcMain.handle('window-get-fullscreen', () => {
+  const win = BrowserWindow.getFocusedWindow()
+  return win ? win.isFullScreen() : false
+})
+
+// ── Helper: read Vite env vars not exposed to Electron main process ───────────
+
+function readDotEnv(name) {
+  if (process.env[name]) return process.env[name]
+  try {
+    const envPath = path.join(app.getAppPath(), '.env')
+    const content = fs.readFileSync(envPath, 'utf-8')
+    const match   = content.match(new RegExp(`^${name}\\s*=\\s*(.+)$`, 'm'))
+    if (match) return match[1].trim().replace(/['"]/g, '')
+  } catch { /* .env not found */ }
+  return null
+}
+
+async function exchangeCodeForTokens(code, redirectUri, clientId, clientSecret) {
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body:    new URLSearchParams({
+      code,
+      client_id:     clientId,
+      client_secret: clientSecret,
+      redirect_uri:  redirectUri,
+      grant_type:    'authorization_code',
+    }).toString(),
+  })
+  const tokens = await response.json()
+  if (tokens.error) return { success: false, error: tokens.error_description || tokens.error }
+  return {
+    success:      true,
+    accessToken:  tokens.access_token,
+    refreshToken: tokens.refresh_token,
+    expiresIn:    tokens.expires_in,
+    scope:        tokens.scope,
+  }
+}
+
+// ── IPC: Google OAuth ─────────────────────────────────────────────────────────
+
+ipcMain.handle('google-auth-start', async () => {
+  const clientId     = readDotEnv('VITE_GOOGLE_CLIENT_ID')
+  const clientSecret = readDotEnv('VITE_GOOGLE_CLIENT_SECRET')
+  if (!clientId)     return { success: false, error: 'VITE_GOOGLE_CLIENT_ID not set in .env' }
+  if (!clientSecret) return { success: false, error: 'VITE_GOOGLE_CLIENT_SECRET not set in .env' }
+
+  const redirectUri = 'http://localhost:5173/auth/callback'
+  const scopes = [
+    'https://www.googleapis.com/auth/calendar',
+    'https://www.googleapis.com/auth/calendar.events',
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.send',
+    'https://www.googleapis.com/auth/gmail.compose',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/userinfo.profile',
+  ].join(' ')
+
+  const params = new URLSearchParams({
+    client_id:     clientId,
+    redirect_uri:  redirectUri,
+    response_type: 'code',
+    scope:         scopes,
+    access_type:   'offline',
+    prompt:        'consent',
+  })
+
+  const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString()
+
+  const authWindow = new BrowserWindow({
+    width:  500,
+    height: 650,
+    show:   true,
+    alwaysOnTop: true,
+    webPreferences: {
+      nodeIntegration:  false,
+      contextIsolation: true,
+    },
+    title:           'Sign in to Google',
+    autoHideMenuBar: true,
+  })
+
+  authWindow.loadURL(authUrl)
+
+  return new Promise((resolve) => {
+    // 'done' must be set to true BEFORE close() is called — otherwise the 'closed'
+    // event fires synchronously and resolves the promise with a failure before
+    // exchangeCodeForTokens() has a chance to complete.
+    let done = false
+
+    function handleCallback(url) {
+      try {
+        if (!url.startsWith('http://localhost:5173/auth/callback')) return
+        if (done) return
+        done = true  // lock out the 'closed' handler immediately
+
+        const urlObj = new URL(url)
+        const code   = urlObj.searchParams.get('code')
+        const error  = urlObj.searchParams.get('error')
+
+        if (!authWindow.isDestroyed()) authWindow.close()
+
+        if (error) {
+          resolve({ success: false, error })
+          return
+        }
+        if (code) {
+          exchangeCodeForTokens(code, redirectUri, clientId, clientSecret)
+            .then(resolve)
+            .catch((err) => resolve({ success: false, error: err.message }))
+        } else {
+          resolve({ success: false, error: 'No auth code received' })
+        }
+      } catch (e) {
+        console.error('[google-auth] callback parse error:', e.message)
+      }
+    }
+
+    authWindow.webContents.on('will-redirect', (_e, url) => handleCallback(url))
+    authWindow.webContents.on('will-navigate',  (_e, url) => handleCallback(url))
+    authWindow.webContents.on('did-navigate',   (_e, url) => handleCallback(url))
+    authWindow.on('closed', () => {
+      if (!done) resolve({ success: false, error: 'Window closed by user' })
+    })
+  })
+})
+
+ipcMain.handle('google-auth-exchange', async (_event, { code, redirectUri }) => {
+  const clientId     = readDotEnv('VITE_GOOGLE_CLIENT_ID')
+  const clientSecret = readDotEnv('VITE_GOOGLE_CLIENT_SECRET')
+  if (!clientId || !clientSecret) {
+    return { success: false, error: 'Missing VITE_GOOGLE_CLIENT_ID or VITE_GOOGLE_CLIENT_SECRET in .env' }
+  }
+  try {
+    return await exchangeCodeForTokens(code, redirectUri, clientId, clientSecret)
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+})
+
+ipcMain.handle('google-auth-refresh', async (_event, refreshToken) => {
+  const clientId     = readDotEnv('VITE_GOOGLE_CLIENT_ID')
+  const clientSecret = readDotEnv('VITE_GOOGLE_CLIENT_SECRET')
+  if (!clientId || !clientSecret) {
+    return { success: false, error: 'Missing VITE_GOOGLE_CLIENT_ID or VITE_GOOGLE_CLIENT_SECRET in .env' }
+  }
+  try {
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body:    new URLSearchParams({
+        refresh_token: refreshToken,
+        client_id:     clientId,
+        client_secret: clientSecret,
+        grant_type:    'refresh_token',
+      }).toString(),
+    })
+    const tokens = await response.json()
+    if (tokens.error) return { success: false, error: tokens.error_description || tokens.error }
+    return {
+      success:     true,
+      accessToken: tokens.access_token,
+      expiresIn:   tokens.expires_in,
+    }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
 })
 
 // ── IPC: load-skills ──────────────────────────────────────────────────────────
