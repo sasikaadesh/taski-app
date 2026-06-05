@@ -4,7 +4,7 @@
 // NEW: TTS for Claude responses, visualizer state callbacks, slash command skills.
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, Mic, Clock } from 'lucide-react';
+import { Send, Loader2, Mic, Clock, VolumeX } from 'lucide-react';
 import { callClaude, CHATBOT_SYSTEM, EMAIL_DRAFT_SYSTEM } from '../lib/claude';
 import { getAllSkills, getSkill } from '../lib/skillLoader';
 import { generateWithImagen, enhanceImagePrompt, detectAspectRatio, IMAGEN_MODELS } from '../lib/imagenGenerator';
@@ -554,6 +554,7 @@ export default function ChatBot({
   const [input,              setInput]              = useState('');
   const [loading,            setLoading]            = useState(false);
   const [error,              setError]              = useState('');
+  const [isSpeaking,         setIsSpeaking]         = useState(false);
   const [emailDrafts,        setEmailDrafts]        = useState({});
   const [pendingEmailContext, setPendingEmailContext] = useState(null);
   const [pendingFolderPlan,   setPendingFolderPlan]  = useState(null);
@@ -715,9 +716,9 @@ export default function ChatBot({
     utterance.volume    = 1.0;
     utterance.voice     = getBestVoice();
 
-    utterance.onstart = () => onVisualizerState?.('speaking');
-    utterance.onend   = () => onVisualizerState?.('idle');
-    utterance.onerror = () => onVisualizerState?.('idle');
+    utterance.onstart = () => { onVisualizerState?.('speaking'); setIsSpeaking(true); };
+    utterance.onend   = () => { onVisualizerState?.('idle');     setIsSpeaking(false); };
+    utterance.onerror = () => { onVisualizerState?.('idle');     setIsSpeaking(false); };
 
     window.speechSynthesis.speak(utterance);
   }, [onVisualizerState]);
@@ -2138,7 +2139,17 @@ export default function ChatBot({
           </div>
         )}
 
-        {/* Row: [Mic] [input] [Send] */}
+        {/* Speaking indicator */}
+        {isSpeaking && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '8px', paddingLeft: '2px' }}>
+            <span style={{ color: '#00d4ff', fontSize: '9px', animation: 'glowPulse 1s ease-in-out infinite', lineHeight: 1 }} aria-hidden="true">●</span>
+            <span style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: '10px', fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#00d4ff' }}>
+              TASKI SPEAKING…
+            </span>
+          </div>
+        )}
+
+        {/* Row: [Mic] [Stop] [input] [Send] */}
         <div style={{ display: 'flex', gap: '8px' }}>
 
           {/* Mic button — 3 states: idle / recording (cyan) / transcribing (amber) */}
@@ -2206,6 +2217,41 @@ export default function ChatBot({
                 : speech.isListening
                   ? '⏹'
                   : <Mic size={15} aria-hidden="true" />}
+            </button>
+          )}
+
+          {/* Stop voice button — only visible while TTS is playing */}
+          {isSpeaking && (
+            <button
+              type="button"
+              onClick={() => {
+                window.speechSynthesis?.cancel();
+                setIsSpeaking(false);
+                onVisualizerState?.('idle');
+              }}
+              aria-label="Stop voice reply"
+              title="Stop voice reply"
+              style={{
+                background:     'rgba(255,45,85,0.12)',
+                border:         '1px solid rgba(255,45,85,0.5)',
+                borderRadius:   '4px',
+                padding:        '0 10px',
+                color:          '#ff2d55',
+                cursor:         'pointer',
+                display:        'flex',
+                alignItems:     'center',
+                justifyContent: 'center',
+                minWidth:       '40px',
+                height:         '40px',
+                flexShrink:     0,
+                transition:     'all 200ms ease',
+                animation:      'glowPulse 1s ease-in-out infinite',
+                boxShadow:      '0 0 10px rgba(255,45,85,0.25)',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,45,85,0.22)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,45,85,0.12)'; }}
+            >
+              <VolumeX size={15} aria-hidden="true" />
             </button>
           )}
 
