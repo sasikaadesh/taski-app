@@ -604,6 +604,9 @@ export default function ChatBot({
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Mic toggle — always-fresh via ref ─────────────────────────────────────
+  const voiceAutoSubmitTimerRef = useRef(null);
+  const handleSendRef           = useRef(null); // always-fresh submit fn for voice auto-submit
+
   const micToggleRef = useRef(null);
   micToggleRef.current = useCallback(() => {
     if (speech.isProcessing) return;
@@ -640,10 +643,17 @@ export default function ChatBot({
   }, [speech.interimTranscript]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When recording and processing are both done, commit the transcript to the input
+  // and schedule an auto-submit after 3 s of inactivity
   useEffect(() => {
     if (!speech.isListening && !speech.isProcessing && speech.transcript) {
       setInput(speech.transcript);
       speech.resetTranscript();
+
+      if (voiceAutoSubmitTimerRef.current) clearTimeout(voiceAutoSubmitTimerRef.current);
+      voiceAutoSubmitTimerRef.current = setTimeout(() => {
+        voiceAutoSubmitTimerRef.current = null;
+        handleSendRef.current?.({ preventDefault: () => {} });
+      }, 3000);
     }
   }, [speech.transcript, speech.isListening, speech.isProcessing]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -755,6 +765,10 @@ export default function ChatBot({
 
   function handleInputChange(e) {
     const val = e.target.value;
+    if (voiceAutoSubmitTimerRef.current) {
+      clearTimeout(voiceAutoSubmitTimerRef.current);
+      voiceAutoSubmitTimerRef.current = null;
+    }
     setInput(val);
     if (val.startsWith('/')) {
       const filter = val.slice(1).toLowerCase();
@@ -925,6 +939,10 @@ export default function ChatBot({
 
   async function handleSend(e) {
     e.preventDefault();
+    if (voiceAutoSubmitTimerRef.current) {
+      clearTimeout(voiceAutoSubmitTimerRef.current);
+      voiceAutoSubmitTimerRef.current = null;
+    }
     const text = input.trim();
     if (!text || loading) return;
 
@@ -1491,6 +1509,9 @@ export default function ChatBot({
       // If muted, speakText() calls onVisualizerState('idle') directly.
     }
   }
+
+  // Keep ref current so the voice auto-submit timer always calls the latest version
+  handleSendRef.current = handleSend;
 
   // ── Source-tag badge ──────────────────────────────────────────────────────
   function SourceTag({ checked }) {
