@@ -1,8 +1,9 @@
 // Electron main process — app window + all IPC file-system handlers.
 
 const { app, BrowserWindow, ipcMain, dialog, Notification, session, shell } = require('electron')
-const path = require('path')
-const fs   = require('fs')
+const path  = require('path')
+const fs    = require('fs')
+const { spawn } = require('child_process')
 
 const isDev = !app.isPackaged
 
@@ -697,4 +698,131 @@ ipcMain.handle('load-skills', async () => {
     const content = fs.readFileSync(path.join(skillsPath, file), 'utf-8')
     return { file, content }
   })
+})
+
+// ── RAG helpers ───────────────────────────────────────────────────────────────
+
+function getRagScript() {
+  // Look for rag.py next to the project root (works in dev and packaged)
+  const candidates = [
+    path.join(app.getAppPath(), 'rag.py'),
+    path.join(__dirname, '../rag.py'),
+    path.join(process.cwd(), 'rag.py'),
+  ]
+  return candidates.find((p) => fs.existsSync(p)) || null
+}
+
+function getPythonExecutables() {
+  return process.platform === 'win32'
+    ? ['python', 'python3', 'py']
+    : ['python3', 'python']
+}
+
+function runPython(event, args, timeoutMs = 120000) {
+  return new Promise((resolve) => {
+    const ragScript = getRagScript()
+    if (!ragScript) {
+      resolve({ error: 'rag.py not found. Make sure it is in the project root directory.' })
+      return
+    }
+
+    const apiKey = readDotEnv('VITE_ANTHROPIC_API_KEY') || ''
+    const pythons = getPythonExecutables()
+    let tried = 0
+
+    function tryNext() {
+      if (tried >= pythons.length) {
+        resolve({ error: 'Python not found. Install Python from python.org and try again.' })
+        return
+      }
+      const python = pythons[tried++]
+
+      const proc = spawn(python, [ragScript, ...args], {
+        env: { ...process.env, ANTHROPIC_API_KEY: apiKey, PYTHONUNBUFFERED: '1' },
+        cwd: path.dirname(ragScript),
+      })
+
+      let lastJson = ''
+      let stderr   = ''
+      const timer  = setTimeout(() => { proc.kill(); resolve({ error: 'Python process timed out.' }) }, timeoutMs)
+
+      proc.stdout.on('data', (data) => {
+        const lines = data.toString().split('\n')
+        for (const line of lines) {
+          const t = line.trim()
+          if (!t) continue
+          try {
+            const parsed = JSON.parse(t)
+            if (parsed.progress) {
+              event?.sender?.send('rag-progress', parsed)
+            } else {
+              lastJson = t
+            }
+          } catch { /* not JSON — ignore */ }
+        }
+      })
+
+      proc.stderr.on('data', (data) => { stderr += data.toString() })
+
+      proc.on('error', () => tryNext())
+
+      proc.on('close', (code) => {
+        clearTimeout(timer)
+        if (lastJson) {
+          try { resolve(JSON.parse(lastJson)); return } catch { /* fall through */ }
+        }
+        if (stderr.includes('ModuleNotFoundError') || stderr.includes('No module named')) {
+          resolve({ error: 'Python packages missing. Run: pip install anthropic chromadb pypdf' })
+        } else if (code !== 0) {
+          resolve({ error: stderr.trim() || `Python exited with code ${code}` })
+        } else {
+          resolve({ error: 'No output from rag.py' })
+        }
+      })
+    }
+
+    tryNext()
+  })
+}
+
+// ── IPC: rag-open-files ───────────────────────────────────────────────────────
+
+ipcMain.handle('rag-open-files', async () => {
+  const { filePaths, canceled } = await dialog.showOpenDialog({
+    title:      'Select Documents for Knowledge Base',
+    filters:    [{ name: 'Documents', extensions: ['pdf', 'txt', 'md'] }],
+    properties: ['openFile', 'multiSelections'],
+  })
+  if (canceled) return { canceled: true }
+  return { filePaths }
+})
+
+// ── IPC: rag-ingest ───────────────────────────────────────────────────────────
+
+ipcMain.handle('rag-ingest', async (event, filePaths) => {
+  return runPython(event, ['--ingest', '--files', filePaths.join(',')])
+})
+
+// ── IPC: rag-ask ──────────────────────────────────────────────────────────────
+
+ipcMain.handle('rag-ask', async (event, question) => {
+  return runPython(event, ['--ask', question])
+})
+
+// ── IPC: rag-status ───────────────────────────────────────────────────────────
+
+ipcMain.handle('rag-status', async (event) => {
+  return runPython(event, ['--status'])
+})
+
+// ── IPC: rag-list ─────────────────────────────────────────────────────────────
+
+ipcMain.handle('rag-list', async (event) => {
+  return runPython(event, ['--list'])
+})
+
+// ── IPC: rag-delete ───────────────────────────────────────────────────────────
+
+ipcMain.handle('rag-delete', async (event, filename) => {
+  return runPython(event, ['--delete', filename])
 })

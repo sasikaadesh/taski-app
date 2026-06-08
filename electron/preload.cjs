@@ -45,5 +45,14 @@ contextBridge.exposeInMainWorld('taskiAPI', {
   googleAuthExchange: (data)   => ipcRenderer.invoke('google-auth-exchange', data),
   googleAuthRefresh:  (token)  => ipcRenderer.invoke('google-auth-refresh', token),
 
+  // RAG document knowledge base
+  ragStatus:      ()            => ipcRenderer.invoke('rag-status'),
+  ragOpenFiles:   ()            => ipcRenderer.invoke('rag-open-files'),
+  ragIngest:      (filePaths)   => ipcRenderer.invoke('rag-ingest', filePaths),
+  ragAsk:         (question)    => ipcRenderer.invoke('rag-ask', question),
+  ragList:        ()            => ipcRenderer.invoke('rag-list'),
+  ragDelete:      (filename)    => ipcRenderer.invoke('rag-delete', filename),
+  onRagProgress:  (callback)    => ipcRenderer.on('rag-progress', (_e, data) => callback(data)),
+
   isElectron: true,
 })

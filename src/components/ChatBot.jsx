@@ -4,7 +4,7 @@
 // NEW: TTS for Claude responses, visualizer state callbacks, slash command skills.
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, Mic, Clock, VolumeX } from 'lucide-react';
+import { Send, Loader2, Mic, Clock, VolumeX, SquarePen } from 'lucide-react';
 import { callClaude, CHATBOT_SYSTEM, EMAIL_DRAFT_SYSTEM } from '../lib/claude';
 import { getAllSkills, getSkill } from '../lib/skillLoader';
 import { generateWithImagen, enhanceImagePrompt, detectAspectRatio, IMAGEN_MODELS } from '../lib/imagenGenerator';
@@ -558,6 +558,9 @@ export default function ChatBot({
   const [emailDrafts,        setEmailDrafts]        = useState({});
   const [pendingEmailContext, setPendingEmailContext] = useState(null);
   const [pendingFolderPlan,   setPendingFolderPlan]  = useState(null);
+  const [uploadedFiles,       setUploadedFiles]       = useState([]);
+  const [uploadingFile,       setUploadingFile]       = useState(null);
+  const [isDragging,          setIsDragging]          = useState(false);
 
   // ── Chat history ──────────────────────────────────────────────────────────
   const chatHistory    = useChatHistory();
@@ -574,8 +577,9 @@ export default function ChatBot({
   const [skillMenuIndex,    setSkillMenuIndex]    = useState(0);      // keyboard nav
   const ALL_SKILLS = getAllSkills();
 
-  const bottomRef  = useRef(null);
-  const inputRef   = useRef(null);
+  const bottomRef    = useRef(null);
+  const inputRef     = useRef(null);
+  const fileInputRef = useRef(null);
   const isMutedRef = useRef(isMuted); // keep ref in sync for use inside callbacks
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
 
@@ -691,6 +695,14 @@ export default function ChatBot({
     return () => document.removeEventListener('mousedown', onClickOutside);
   }, [showSkillMenu]);
 
+  // Debug: log available taskiAPI methods on mount
+  useEffect(() => {
+    console.log('[Taski] taskiAPI available:', !!window.taskiAPI);
+    console.log('[Taski] taskiAPI methods:', window.taskiAPI ? Object.keys(window.taskiAPI) : 'NOT FOUND');
+    console.log('[Taski] ragOpenFiles:', !!window.taskiAPI?.ragOpenFiles);
+    console.log('[Taski] ragIngest:', !!window.taskiAPI?.ragIngest);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Start a new chat session on mount
   useEffect(() => {
     sessionIdRef.current = chatHistory.startNewSession();
@@ -764,6 +776,22 @@ export default function ChatBot({
     const msg = 'TASKI: Returning to standard mode.';
     setMessages((prev) => [...prev, { role: 'assistant', content: msg }].slice(-MAX_MESSAGES));
     speakText(msg);
+  }
+
+  function startNewChat() {
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    setMessages([]);
+    setInput('');
+    setError('');
+    setViewingPast(null);
+    setActiveSkill(null);
+    setActiveSubcategory(null);
+    setShowSkillMenu(false);
+    setPendingEmailContext(null);
+    setPendingFolderPlan(null);
+    setUploadedFiles([]);
+    setUploadingFile(null);
+    sessionIdRef.current = chatHistory.startNewSession();
   }
 
   function handleSubcategoryClick(subcategory) {
@@ -1398,6 +1426,16 @@ export default function ChatBot({
           system += `\n\nActive mode: ${activeSubcategory.label}\nFocus specifically on ${activeSubcategory.label} for this conversation.`;
         }
       }
+
+      // Inject browser-read file contents as context
+      const filesWithContent = uploadedFiles.filter((f) => f.content);
+      if (filesWithContent.length > 0) {
+        const fileContext = filesWithContent
+          .map((f) => `=== FILE: ${f.name} ===\n${f.content}`)
+          .join('\n\n');
+        system += `\n\nThe user has uploaded the following documents. Use them to answer their questions accurately:\n\n${fileContext}`;
+      }
+
       let checkedTag = null;
 
       const wantsCalendar = hasCalendarIntent(text);
@@ -1530,6 +1568,149 @@ export default function ChatBot({
   // Keep ref current so the voice auto-submit timer always calls the latest version
   handleSendRef.current = handleSend;
 
+  // ── RAG file upload ───────────────────────────────────────────────────────
+
+  function addMessage(msg) {
+    setMessages((prev) => [...prev, msg].slice(-MAX_MESSAGES));
+  }
+
+  // Read a browser File object as text (txt / md). Returns null for unsupported types.
+  function readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+      if (!file.name.match(/\.(txt|md)$/i)) { resolve(null); return; }
+      const reader = new FileReader();
+      reader.onload  = (e) => resolve(e.target.result);
+      reader.onerror = ()  => reject(new Error('Could not read file'));
+      reader.readAsText(file);
+    });
+  }
+
+  // Process a single browser File object — used when Electron RAG is not available.
+  async function processFileObject(file) {
+    const fileName = file.name;
+    setUploadingFile(fileName);
+    addMessage({ role: 'user', content: `📎 Uploading: ${fileName}` });
+
+    try {
+      if (file.name.match(/\.pdf$/i)) {
+        setUploadingFile(null);
+        addMessage({
+          role:    'assistant',
+          content: `PDF files require the Taski desktop app with Python RAG.\nTXT and Markdown files work directly — try converting ${fileName} to .txt first.`,
+        });
+        return;
+      }
+
+      const content = await readFileAsText(file);
+      setUploadingFile(null);
+
+      if (content === null) {
+        addMessage({ role: 'assistant', content: `Unsupported file type: ${fileName}. Use TXT or Markdown files.` });
+        return;
+      }
+
+      const preview = content.length > 200 ? content.slice(0, 200) + '…' : content;
+      setUploadedFiles((prev) => [...prev, { name: fileName, content }]);
+      addMessage({
+        role:    'assistant',
+        content: `✓ **${fileName}** loaded (${content.length.toLocaleString()} characters).\n\n> ${preview}\n\nYou can now ask me questions about this document!`,
+      });
+    } catch (e) {
+      setUploadingFile(null);
+      addMessage({ role: 'assistant', content: `Upload failed: ${e.message}` });
+    }
+  }
+
+  async function handleFileUpload() {
+    // Electron path: use native OS file picker + Python RAG ingestion
+    if (window.taskiAPI?.ragOpenFiles) {
+      const result = await window.taskiAPI.ragOpenFiles();
+      if (result.canceled || !result.filePaths?.length) return;
+
+      for (const filePath of result.filePaths) {
+        const fileName = filePath.split(/[/\\]/).pop();
+        setUploadingFile(fileName);
+        addMessage({ role: 'user', content: `📎 Uploading: ${fileName}` });
+
+        try {
+          const ingestResult = await window.taskiAPI.ragIngest([filePath]);
+          setUploadingFile(null);
+          if (ingestResult.error) {
+            addMessage({ role: 'assistant', content: `Could not process ${fileName}: ${ingestResult.error}` });
+          } else {
+            setUploadedFiles((prev) => [...prev, { name: fileName, path: filePath }]);
+            addMessage({
+              role:    'assistant',
+              content: `✓ **${fileName}** added to knowledge base. ${ingestResult.chunks_added || ''} chunks indexed.\n\nYou can now ask me questions about this document!`,
+            });
+          }
+        } catch (e) {
+          setUploadingFile(null);
+          addMessage({ role: 'assistant', content: `Upload failed: ${e.message}` });
+        }
+      }
+      return;
+    }
+
+    // Browser fallback: open native file picker, read content via FileReader
+    fileInputRef.current?.click();
+  }
+
+  async function handleNativeFileChange(e) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    for (const file of files) {
+      await processFileObject(file);
+    }
+  }
+
+  function removeUploadedFile(index) {
+    setUploadedFiles((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  async function handleFileDrop(e) {
+    e.preventDefault();
+    setIsDragging(false);
+
+    const files     = Array.from(e.dataTransfer.files);
+    const supported = files.filter((f) => f.name.match(/\.(pdf|txt|md)$/i));
+
+    if (supported.length === 0) {
+      addMessage({ role: 'assistant', content: 'Only PDF, TXT, and MD files are supported.' });
+      return;
+    }
+
+    // Electron path: use file paths + Python RAG
+    if (window.taskiAPI?.ragIngest) {
+      const paths = supported.map((f) => f.path).filter(Boolean);
+      for (const filePath of paths) {
+        const fileName = filePath.split(/[/\\]/).pop();
+        setUploadingFile(fileName);
+        addMessage({ role: 'user', content: `📎 Dropped: ${fileName}` });
+
+        try {
+          const result = await window.taskiAPI.ragIngest([filePath]);
+          setUploadingFile(null);
+          if (!result.error) {
+            setUploadedFiles((prev) => [...prev, { name: fileName, path: filePath }]);
+            addMessage({ role: 'assistant', content: `✓ **${fileName}** ready! Ask me anything about it.` });
+          } else {
+            addMessage({ role: 'assistant', content: `Could not process ${fileName}: ${result.error}` });
+          }
+        } catch (e) {
+          setUploadingFile(null);
+          addMessage({ role: 'assistant', content: `Upload failed: ${e.message}` });
+        }
+      }
+      return;
+    }
+
+    // Browser fallback: read file content directly
+    for (const file of supported) {
+      await processFileObject(file);
+    }
+  }
+
   // ── Source-tag badge ──────────────────────────────────────────────────────
   function SourceTag({ checked }) {
     if (!checked) return null;
@@ -1571,7 +1752,35 @@ export default function ChatBot({
         overflow:       'hidden',
         position:       'relative',
       }}
+      onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setIsDragging(false); }}
+      onDrop={handleFileDrop}
     >
+      {/* ── Drag-and-drop overlay ── */}
+      {isDragging && (
+        <div style={{
+          position:       'absolute',
+          inset:          0,
+          background:     'rgba(0,212,255,0.06)',
+          border:         '2px dashed rgba(0,212,255,0.5)',
+          borderRadius:   '8px',
+          display:        'flex',
+          flexDirection:  'column',
+          alignItems:     'center',
+          justifyContent: 'center',
+          zIndex:         50,
+          pointerEvents:  'none',
+        }}>
+          <div style={{ fontSize: '32px', marginBottom: '8px' }}>📄</div>
+          <div style={{ color: '#00d4ff', fontFamily: 'Rajdhani', fontSize: '14px', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+            DROP TO ADD TO KNOWLEDGE BASE
+          </div>
+          <div style={{ color: 'rgba(0,212,255,0.4)', fontFamily: 'Rajdhani', fontSize: '11px', marginTop: '4px' }}>
+            PDF · TXT · Markdown
+          </div>
+        </div>
+      )}
+
       {/* ── History panel (absolutely positioned overlay) ── */}
       {historyOpen && (
         <ChatHistoryPanel
@@ -1722,32 +1931,58 @@ export default function ChatBot({
         )}
           </div>
 
-          {/* History icon button */}
-          <button
-            onClick={() => setHistoryOpen(true)}
-            aria-label="View chat history"
-            style={{
-              background:  'none',
-              border:      'none',
-              cursor:      'pointer',
-              color:       'var(--color-text-secondary)',
-              padding:     '4px',
-              display:     'flex',
-              alignItems:  'center',
-              flexShrink:  0,
-              transition:  'color 200ms, text-shadow 200ms',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color      = 'var(--color-neon-cyan)';
-              e.currentTarget.style.textShadow = '0 0 8px rgba(0,212,255,0.6)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color      = 'var(--color-text-secondary)';
-              e.currentTarget.style.textShadow = 'none';
-            }}
-          >
-            <Clock size={16} aria-hidden="true" />
-          </button>
+          {/* Header icon buttons */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+            <button
+              onClick={startNewChat}
+              aria-label="New chat"
+              title="New chat"
+              style={{
+                background:  'none',
+                border:      'none',
+                cursor:      'pointer',
+                color:       'var(--color-text-secondary)',
+                padding:     '4px',
+                display:     'flex',
+                alignItems:  'center',
+                transition:  'color 200ms, text-shadow 200ms',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color      = 'var(--color-neon-cyan)';
+                e.currentTarget.style.textShadow = '0 0 8px rgba(0,212,255,0.6)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color      = 'var(--color-text-secondary)';
+                e.currentTarget.style.textShadow = 'none';
+              }}
+            >
+              <SquarePen size={16} aria-hidden="true" />
+            </button>
+            <button
+              onClick={() => setHistoryOpen(true)}
+              aria-label="View chat history"
+              style={{
+                background:  'none',
+                border:      'none',
+                cursor:      'pointer',
+                color:       'var(--color-text-secondary)',
+                padding:     '4px',
+                display:     'flex',
+                alignItems:  'center',
+                transition:  'color 200ms, text-shadow 200ms',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color      = 'var(--color-neon-cyan)';
+                e.currentTarget.style.textShadow = '0 0 8px rgba(0,212,255,0.6)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color      = 'var(--color-text-secondary)';
+                e.currentTarget.style.textShadow = 'none';
+              }}
+            >
+              <Clock size={16} aria-hidden="true" />
+            </button>
+          </div>
         </div>
         )}
       </div>
@@ -2360,8 +2595,101 @@ export default function ChatBot({
           </div>
         )}
 
-        {/* Row: [Mic] [Stop] [input] [Send] */}
+        {/* Uploading status bar */}
+        {uploadingFile && (
+          <div style={{
+            padding:     '5px 10px',
+            background:  'rgba(0,212,255,0.05)',
+            borderTop:   '1px solid rgba(0,212,255,0.1)',
+            display:     'flex',
+            alignItems:  'center',
+            gap:         '8px',
+            fontSize:    '11px',
+            color:       '#00d4ff',
+            fontFamily:  'Rajdhani',
+            letterSpacing: '0.08em',
+            marginBottom: '6px',
+          }}>
+            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#00d4ff', animation: 'glowPulse 0.8s infinite', flexShrink: 0, display: 'inline-block' }} />
+            PROCESSING {uploadingFile}...
+          </div>
+        )}
+
+        {/* Uploaded file chips */}
+        {uploadedFiles.length > 0 && !uploadingFile && (
+          <div style={{ padding: '5px 0', borderTop: '1px solid rgba(0,212,255,0.1)', display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '6px' }}>
+            {uploadedFiles.map((file, i) => (
+              <div key={i} style={{
+                background:   'rgba(0,212,255,0.08)',
+                border:       '1px solid rgba(0,212,255,0.25)',
+                borderRadius: '12px',
+                padding:      '2px 8px',
+                fontSize:     '10px',
+                color:        'rgba(0,212,255,0.7)',
+                fontFamily:   'Rajdhani',
+                display:      'flex',
+                alignItems:   'center',
+                gap:          '4px',
+              }}>
+                📄 {file.name}
+                <span
+                  onClick={() => removeUploadedFile(i)}
+                  style={{ cursor: 'pointer', opacity: 0.5, marginLeft: '2px', fontSize: '12px' }}
+                  onMouseEnter={(e) => { e.target.style.opacity = '1'; }}
+                  onMouseLeave={(e) => { e.target.style.opacity = '0.5'; }}
+                >
+                  ×
+                </span>
+              </div>
+            ))}
+            <div style={{ fontSize: '10px', color: 'rgba(0,212,255,0.3)', fontFamily: 'Rajdhani', display: 'flex', alignItems: 'center' }}>
+              Ask me anything about these files
+            </div>
+          </div>
+        )}
+
+        {/* Row: [Upload] [Mic] [Stop] [input] [Send] */}
         <div style={{ display: 'flex', gap: '8px' }}>
+
+          {/* Upload button */}
+          <button
+            type="button"
+            onClick={handleFileUpload}
+            title="Upload document to knowledge base"
+            disabled={!!uploadingFile}
+            style={{
+              background:     'transparent',
+              border:         '1px solid rgba(0,212,255,0.25)',
+              borderRadius:   '6px',
+              width:          '36px',
+              height:         '36px',
+              display:        'flex',
+              alignItems:     'center',
+              justifyContent: 'center',
+              cursor:         uploadingFile ? 'wait' : 'pointer',
+              color:          uploadingFile ? '#00d4ff' : 'rgba(0,212,255,0.5)',
+              fontSize:       '16px',
+              flexShrink:     0,
+              transition:     'all 0.2s',
+              opacity:        uploadingFile ? 0.6 : 1,
+            }}
+            onMouseEnter={(e) => {
+              if (!uploadingFile) {
+                e.currentTarget.style.borderColor = 'rgba(0,212,255,0.7)';
+                e.currentTarget.style.color       = '#00d4ff';
+                e.currentTarget.style.background  = 'rgba(0,212,255,0.08)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!uploadingFile) {
+                e.currentTarget.style.borderColor = 'rgba(0,212,255,0.25)';
+                e.currentTarget.style.color       = 'rgba(0,212,255,0.5)';
+                e.currentTarget.style.background  = 'transparent';
+              }
+            }}
+          >
+            📎
+          </button>
 
           {/* Mic button — 3 states: idle / recording (cyan) / transcribing (amber) */}
           {speech.isSupported && (
@@ -2575,6 +2903,16 @@ export default function ChatBot({
             <span style={{ display: 'none' }} className="send-label">SEND</span>
           </button>
         </div>
+
+        {/* Hidden native file input — used when Electron RAG is not available */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".txt,.md,.pdf"
+          multiple
+          style={{ display: 'none' }}
+          onChange={handleNativeFileChange}
+        />
       </form>
     </div>
   );
