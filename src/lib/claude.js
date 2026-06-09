@@ -9,10 +9,13 @@ const API_URL = 'https://api.anthropic.com/v1/messages';
  *
  * @param {Array<{role: 'user'|'assistant', content: string}>} messages
  * @param {Object} options
- * @param {string} options.system - Optional system prompt
- * @returns {Promise<string>}     - Claude's final text response
+ * @param {string}  options.system       - Optional system prompt
+ * @param {boolean} options.useWebSearch - Enable native web search tool
+ * @param {number}  options.maxSearches  - Max web searches (default 3)
+ * @param {Array}   options.tools        - Additional tools to merge in
+ * @returns {Promise<string|{text:string,sources:Array,usedSearch:true}>}
  */
-export async function callClaude(messages, { system = '', maxTokens = 1024 } = {}) {
+export async function callClaude(messages, { system = '', maxTokens = 1024, useWebSearch = false, maxSearches = 3, tools = null } = {}) {
   if (!ANTHROPIC_API_KEY) {
     throw new Error(
       'Missing VITE_ANTHROPIC_API_KEY — copy .env.example → .env and add your key.'
@@ -26,6 +29,14 @@ export async function callClaude(messages, { system = '', maxTokens = 1024 } = {
   };
 
   if (system) body.system = system;
+
+  if (useWebSearch) {
+    body.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: maxSearches }];
+  }
+
+  if (tools) {
+    body.tools = [...(body.tools || []), ...tools];
+  }
 
   const response = await fetch(API_URL, {
     method: 'POST',
@@ -45,7 +56,22 @@ export async function callClaude(messages, { system = '', maxTokens = 1024 } = {
 
   const data = await response.json();
 
-  // Extract the text block from the response
+  // Web-search path: extract sources + all text blocks
+  if (useWebSearch && data.content && Array.isArray(data.content)) {
+    const sources = [];
+    for (const block of data.content) {
+      if (block.type === 'web_search_tool_result') {
+        for (const result of (block.content || [])) {
+          if (result.url) sources.push({ title: result.title || result.url, url: result.url });
+        }
+      }
+    }
+    const textBlocks = data.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+    if (sources.length > 0) return { text: textBlocks, sources, usedSearch: true };
+    return textBlocks || '';
+  }
+
+  // Standard path: return the last text block
   const textBlock = [...(data.content ?? [])].reverse().find((b) => b.type === 'text');
   return textBlock?.text ?? '';
 }

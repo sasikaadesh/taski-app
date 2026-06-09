@@ -352,6 +352,14 @@ ipcMain.handle('undo-organize', async (_event, moves) => {
   return { success: true, restored, errors }
 })
 
+// ── IPC: open-external ───────────────────────────────────────────────────────
+
+ipcMain.handle('open-external', (_event, url) => {
+  if (typeof url === 'string' && (url.startsWith('https://') || url.startsWith('http://'))) {
+    shell.openExternal(url)
+  }
+})
+
 // ── IPC: show-notification ────────────────────────────────────────────────────
 
 ipcMain.handle('show-notification', async (_event, title, body) => {

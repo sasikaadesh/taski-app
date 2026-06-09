@@ -247,3 +247,241 @@ input[type="time"] {
 ::-webkit-scrollbar-thumb         { background: var(--color-border); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover   { background: var(--color-neon-cyan-dim); }
 *                                 { scrollbar-width: thin; scrollbar-color: var(--color-border) var(--color-bg-base); }
+
+/* ── TASKI Chat Markdown Styles ───────────────────────────────────────────── */
+
+.taski-message h1 {
+  font-size: 15px;
+  font-weight: 600;
+  color: #00d4ff;
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 14px 0 8px 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(0,212,255,0.2);
+  line-height: 1.3;
+}
+
+.taski-message h2 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #00d4ff;
+  font-family: 'Rajdhani', sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin: 12px 0 6px 0;
+  padding-left: 8px;
+  border-left: 2px solid #00d4ff;
+  line-height: 1.3;
+}
+
+.taski-message h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4a9bbe;
+  font-family: 'Rajdhani', sans-serif;
+  letter-spacing: 0.05em;
+  margin: 10px 0 4px 0;
+  line-height: 1.3;
+}
+
+.taski-message h4,
+.taski-message h5,
+.taski-message h6 {
+  font-size: 12px;
+  font-weight: 600;
+  color: #3a8aae;
+  font-family: 'Rajdhani', sans-serif;
+  letter-spacing: 0.04em;
+  margin: 8px 0 4px 0;
+}
+
+.taski-message p {
+  margin: 0 0 8px 0;
+  color: var(--color-text-primary);
+  line-height: 1.65;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+.taski-message p:last-child {
+  margin-bottom: 0;
+}
+
+.taski-message strong,
+.taski-message b {
+  color: #e0f4ff;
+  font-weight: 700;
+}
+
+.taski-message em,
+.taski-message i {
+  color: #a0d4e8;
+  font-style: italic;
+}
+
+.taski-message ul {
+  margin: 4px 0 8px 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+.taski-message ul li {
+  color: var(--color-text-primary);
+  padding: 2px 0 2px 16px;
+  position: relative;
+  line-height: 1.6;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+.taski-message ul li::before {
+  content: '▸';
+  position: absolute;
+  left: 0;
+  color: #00d4ff;
+  font-size: 10px;
+  top: 4px;
+}
+
+.taski-message ol {
+  margin: 4px 0 8px 0;
+  padding-left: 0;
+  list-style: none;
+  counter-reset: taski-counter;
+}
+
+.taski-message ol li {
+  color: var(--color-text-primary);
+  padding: 2px 0 2px 22px;
+  position: relative;
+  line-height: 1.6;
+  counter-increment: taski-counter;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+.taski-message ol li::before {
+  content: counter(taski-counter) '.';
+  position: absolute;
+  left: 0;
+  color: #00d4ff;
+  font-size: 11px;
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 600;
+  min-width: 18px;
+}
+
+.taski-message li > ul,
+.taski-message li > ol {
+  margin: 4px 0 4px 8px;
+}
+
+.taski-message code {
+  background: rgba(0,212,255,0.08);
+  border: 1px solid rgba(0,212,255,0.2);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 11px;
+  color: #00ff88;
+  letter-spacing: 0.02em;
+}
+
+.taski-message pre {
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(0,212,255,0.15);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: 8px 0;
+  overflow-x: auto;
+}
+
+.taski-message pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  color: #00ff88;
+  line-height: 1.6;
+  display: block;
+}
+
+.taski-message blockquote {
+  border-left: 3px solid rgba(0,212,255,0.4);
+  margin: 8px 0;
+  padding: 6px 12px;
+  background: rgba(0,212,255,0.04);
+  border-radius: 0 6px 6px 0;
+  color: #a0c8dc;
+  font-style: italic;
+}
+
+.taski-message hr {
+  border: none;
+  border-top: 1px solid rgba(0,212,255,0.15);
+  margin: 12px 0;
+}
+
+.taski-message a {
+  color: #00d4ff;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(0,212,255,0.3);
+  transition: all 0.2s;
+}
+
+.taski-message a:hover {
+  color: #ffffff;
+  border-bottom-color: #ffffff;
+}
+
+.taski-message table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 12px;
+}
+
+.taski-message th {
+  background: rgba(0,212,255,0.1);
+  color: #00d4ff;
+  padding: 6px 10px;
+  text-align: left;
+  font-family: 'Rajdhani', sans-serif;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-size: 11px;
+  border: 1px solid rgba(0,212,255,0.2);
+}
+
+.taski-message td {
+  padding: 5px 10px;
+  color: var(--color-text-primary);
+  border: 1px solid rgba(0,212,255,0.1);
+  line-height: 1.5;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 13px;
+}
+
+.taski-message tr:nth-child(even) td {
+  background: rgba(0,212,255,0.03);
+}
+
+.taski-message tr:hover td {
+  background: rgba(0,212,255,0.06);
+}
+
+/* First element in the message needs no top margin */
+.taski-message > *:first-child {
+  margin-top: 0;
+}
+
+/* ── Typing dot animation (loading indicator) ─────────────────────────────── */
+@keyframes typingDot {
+  0%, 100% { transform: translateY(0);    opacity: 0.3; }
+  50%       { transform: translateY(-4px); opacity: 1;   }
+}

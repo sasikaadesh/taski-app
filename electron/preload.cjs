@@ -54,5 +54,8 @@ contextBridge.exposeInMainWorld('taskiAPI', {
   ragDelete:      (filename)    => ipcRenderer.invoke('rag-delete', filename),
   onRagProgress:  (callback)    => ipcRenderer.on('rag-progress', (_e, data) => callback(data)),
 
+  // Open a URL in the system browser
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
+
   isElectron: true,
 })

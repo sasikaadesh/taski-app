@@ -151,6 +151,17 @@ const SECTIONS = [
     ],
   },
   {
+    title: 'WEB SEARCH',
+    items: [
+      'Click the 🌐 globe button in the chat input to turn web search on or off',
+      'When web search is on every message you send will include a live internet search before Claude answers',
+      'The button glows cyan when active and a banner shows above the input',
+      'Sources are shown below the response so you can verify the information',
+      'Great for: current news, prices, weather, recent events, and anything that needs up-to-date information',
+      'Turn it off for normal AI conversations that do not need internet data',
+    ],
+  },
+  {
     title: 'PRIVACY AND SECURITY',
     items: [
       'Your Google password is never stored in Taski — Google handles the login',

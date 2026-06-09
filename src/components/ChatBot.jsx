@@ -4,8 +4,9 @@
 // NEW: TTS for Claude responses, visualizer state callbacks, slash command skills.
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, Mic, Clock, VolumeX, SquarePen } from 'lucide-react';
+import { Send, Mic, Clock, VolumeX, SquarePen } from 'lucide-react';
 import { callClaude, CHATBOT_SYSTEM, EMAIL_DRAFT_SYSTEM } from '../lib/claude';
+import ChatMessage from './ChatMessage';
 import { getAllSkills, getSkill } from '../lib/skillLoader';
 import { generateWithImagen, enhanceImagePrompt, detectAspectRatio, IMAGEN_MODELS } from '../lib/imagenGenerator';
 import ImagenResultCard from './ImagenResultCard';
@@ -561,6 +562,8 @@ export default function ChatBot({
   const [uploadedFiles,       setUploadedFiles]       = useState([]);
   const [uploadingFile,       setUploadingFile]       = useState(null);
   const [isDragging,          setIsDragging]          = useState(false);
+  const [webSearchMode,       setWebSearchMode]       = useState(false);
+  const [isSearching,         setIsSearching]         = useState(false);
 
   // ── Chat history ──────────────────────────────────────────────────────────
   const chatHistory    = useChatHistory();
@@ -773,6 +776,7 @@ export default function ChatBot({
     setActiveSubcategory(null);
     setShowSkillMenu(false);
     setInput('');
+    setWebSearchMode(false);
     const msg = 'TASKI: Returning to standard mode.';
     setMessages((prev) => [...prev, { role: 'assistant', content: msg }].slice(-MAX_MESSAGES));
     speakText(msg);
@@ -791,6 +795,8 @@ export default function ChatBot({
     setPendingFolderPlan(null);
     setUploadedFiles([]);
     setUploadingFile(null);
+    setWebSearchMode(false);
+    setIsSearching(false);
     sessionIdRef.current = chatHistory.startNewSession();
   }
 
@@ -1443,7 +1449,8 @@ export default function ChatBot({
 
       // Guard: if Google data is needed but user isn't connected, tell them to use the footer.
       // Never trigger an auth popup from the chatbot — only the footer buttons do that.
-      if ((wantsCalendar || wantsEmail) && !isAuthenticated()) {
+      // Skip this guard entirely when web search mode is active.
+      if (!webSearchMode && (wantsCalendar || wantsEmail) && !isAuthenticated()) {
         const reply = "To access your Google Calendar or Gmail, please click the **CAL** or **GMAIL** button in the footer to connect your Google account first. It only takes a moment!";
         setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { checked: null } }].slice(-MAX_MESSAGES));
         speakText(reply);
@@ -1452,7 +1459,7 @@ export default function ChatBot({
         return;
       }
 
-      if (wantsCalendar || wantsEmail) {
+      if (!webSearchMode && (wantsCalendar || wantsEmail)) {
         const calendarPromise = wantsCalendar
           ? (async () => {
               const { start, end } = detectDateRange(text);
@@ -1545,17 +1552,27 @@ export default function ChatBot({
       }
 
       const apiMessages = next.map(({ role, content }) => ({ role, content }));
-      const reply       = await callClaude(apiMessages, { system });
+      if (webSearchMode) setIsSearching(true);
+      const rawReply    = await callClaude(apiMessages, {
+        system,
+        useWebSearch: webSearchMode,
+        ...(webSearchMode ? { maxSearches: 5, maxTokens: 1500 } : {}),
+      });
+      setIsSearching(false);
+
+      const reply   = typeof rawReply === 'object' ? rawReply.text : rawReply;
+      const sources = (typeof rawReply === 'object' && rawReply.sources) ? rawReply.sources : [];
 
       setMessages((prev) => [...prev, {
         role:    'assistant',
         content: reply,
-        meta:    { checked: checkedTag },
+        meta:    { checked: checkedTag, sources },
       }].slice(-MAX_MESSAGES));
 
       speakText(reply);
 
     } catch (err) {
+      setIsSearching(false);
       setError(err.message);
       onVisualizerState?.('idle');
     } finally {
@@ -2288,69 +2305,21 @@ export default function ChatBot({
               /* ── Normal JARVIS bubble ── */
               <div
                 style={{
-                  maxWidth:       '84%',
-                  display:        'flex',
-                  flexDirection:  'column',
-                  alignItems:     'flex-start',
-                  gap:            '3px',
+                  maxWidth:      '84%',
+                  display:       'flex',
+                  flexDirection: 'column',
+                  alignItems:    'flex-start',
+                  gap:           '3px',
                 }}
               >
                 <SourceTag checked={msg.meta?.checked} />
-                <div
-                  style={{
-                    padding:       '9px 13px',
-                    borderRadius:  '4px',
-                    fontFamily:    "'Rajdhani', sans-serif",
-                    fontSize:      '14px',
-                    letterSpacing: '0.02em',
-                    lineHeight:    1.55,
-                    background:    'var(--color-bg-raised)',
-                    border:        '1px solid rgba(0,212,255,0.15)',
-                    color:         'var(--color-text-primary)',
-                    whiteSpace:    'pre-line',
-                    width:         '100%',
-                  }}
-                >
-                  {/* "TASKI:" prefix */}
-                  <span
-                    style={{
-                      fontFamily:    "'Orbitron', sans-serif",
-                      fontSize:      '9px',
-                      fontWeight:    700,
-                      letterSpacing: '0.15em',
-                      color:         '#00d4ff',
-                      display:       'block',
-                      marginBottom:  '4px',
-                      opacity:       0.7,
-                    }}
-                  >
-                    TASKI
-                  </span>
-                  {msg.content}
-
-                  {/* Reconnect Google link */}
-                  {msg.meta?.reconnectGmail && (
-                    <button
-                      onClick={handleReconnectGoogle}
-                      style={{
-                        display:             'block',
-                        marginTop:           '8px',
-                        fontFamily:          "'Rajdhani', sans-serif",
-                        fontSize:            '12px',
-                        letterSpacing:       '0.04em',
-                        color:               '#00d4ff',
-                        background:          'none',
-                        border:              'none',
-                        cursor:              'pointer',
-                        padding:             0,
-                        textDecoration:      'underline',
-                        textUnderlineOffset: '3px',
-                      }}
-                    >
-                      Reconnect Google →
-                    </button>
-                  )}
-                </div>
+                <ChatMessage
+                  message={msg.content}
+                  role="assistant"
+                  sources={msg.meta?.sources}
+                  reconnectGmail={msg.meta?.reconnectGmail}
+                  onReconnectGoogle={handleReconnectGoogle}
+                />
               </div>
             )}
           </div>
@@ -2365,23 +2334,37 @@ export default function ChatBot({
                 borderRadius: '4px',
                 background:   'var(--color-bg-raised)',
                 border:       '1px solid rgba(0,212,255,0.15)',
-                display:      'flex',
-                alignItems:   'center',
-                gap:          '8px',
               }}
             >
-              <Loader2 size={13} className="animate-spin" style={{ color: '#00d4ff' }} aria-hidden="true" />
               <span
                 style={{
-                  fontFamily:    "'Rajdhani', sans-serif",
-                  fontSize:      '11px',
-                  letterSpacing: '0.1em',
-                  textTransform: 'uppercase',
-                  color:         'rgba(0,212,255,0.6)',
+                  fontFamily:    "'Orbitron', sans-serif",
+                  fontSize:      '9px',
+                  fontWeight:    700,
+                  letterSpacing: '0.15em',
+                  color:         '#00d4ff',
+                  display:       'block',
+                  marginBottom:  '6px',
+                  opacity:       0.7,
                 }}
               >
-                Processing…
+                TASKI
               </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                {[0, 1, 2].map((i) => (
+                  <span
+                    key={i}
+                    style={{
+                      width:        '6px',
+                      height:       '6px',
+                      borderRadius: '50%',
+                      background:   '#00d4ff',
+                      display:      'inline-block',
+                      animation:    `typingDot 1.2s ${i * 0.2}s ease-in-out infinite`,
+                    }}
+                  />
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -2595,6 +2578,62 @@ export default function ChatBot({
           </div>
         )}
 
+        {/* Web search active banner */}
+        {webSearchMode && (
+          <div style={{
+            padding:        '4px 12px',
+            background:     'rgba(0,212,255,0.05)',
+            borderTop:      '1px solid rgba(0,212,255,0.15)',
+            display:        'flex',
+            alignItems:     'center',
+            justifyContent: 'space-between',
+            fontSize:       '10px',
+            fontFamily:     "'Rajdhani', sans-serif",
+            letterSpacing:  '0.08em',
+            marginBottom:   '6px',
+          }}>
+            <span style={{ color: '#00d4ff', display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <span style={{
+                width:      '5px',
+                height:     '5px',
+                borderRadius: '50%',
+                background:   '#00d4ff',
+                boxShadow:    '0 0 6px #00d4ff',
+                display:      'inline-block',
+                flexShrink:   0,
+              }} />
+              WEB SEARCH ACTIVE
+            </span>
+            <span
+              style={{ color: 'rgba(0,212,255,0.4)', cursor: 'pointer', fontSize: '11px' }}
+              onClick={() => setWebSearchMode(false)}
+            >
+              TURN OFF
+            </span>
+          </div>
+        )}
+
+        {/* Searching indicator */}
+        {isSearching && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', paddingLeft: '2px' }}>
+            <span style={{ display: 'flex', gap: '2px' }}>
+              {[0, 1, 2].map((i) => (
+                <span key={i} style={{
+                  width:        '4px',
+                  height:       '4px',
+                  borderRadius: '50%',
+                  background:   '#00d4ff',
+                  display:      'inline-block',
+                  animation:    `glowPulse 1s ${i * 0.2}s ease-in-out infinite`,
+                }} />
+              ))}
+            </span>
+            <span style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: '10px', fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#00d4ff' }}>
+              SEARCHING THE WEB...
+            </span>
+          </div>
+        )}
+
         {/* Uploading status bar */}
         {uploadingFile && (
           <div style={{
@@ -2689,6 +2728,45 @@ export default function ChatBot({
             }}
           >
             📎
+          </button>
+
+          {/* Web search toggle button */}
+          <button
+            type="button"
+            onClick={() => setWebSearchMode((prev) => !prev)}
+            title={webSearchMode ? 'Web search ON — click to disable' : 'Enable web search'}
+            style={{
+              background:     webSearchMode ? 'rgba(0,212,255,0.12)' : 'transparent',
+              border:         webSearchMode ? '1px solid #00d4ff'    : '1px solid rgba(0,212,255,0.25)',
+              borderRadius:   '6px',
+              width:          '36px',
+              height:         '36px',
+              display:        'flex',
+              alignItems:     'center',
+              justifyContent: 'center',
+              cursor:         'pointer',
+              color:          webSearchMode ? '#00d4ff' : 'rgba(0,212,255,0.5)',
+              fontSize:       '16px',
+              flexShrink:     0,
+              transition:     'all 0.2s',
+              boxShadow:      webSearchMode ? '0 0 12px rgba(0,212,255,0.3)' : 'none',
+            }}
+            onMouseEnter={(e) => {
+              if (!webSearchMode) {
+                e.currentTarget.style.borderColor = 'rgba(0,212,255,0.7)';
+                e.currentTarget.style.color       = '#00d4ff';
+                e.currentTarget.style.background  = 'rgba(0,212,255,0.08)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!webSearchMode) {
+                e.currentTarget.style.borderColor = 'rgba(0,212,255,0.25)';
+                e.currentTarget.style.color       = 'rgba(0,212,255,0.5)';
+                e.currentTarget.style.background  = 'transparent';
+              }
+            }}
+          >
+            🌐
           </button>
 
           {/* Mic button — 3 states: idle / recording (cyan) / transcribing (amber) */}
