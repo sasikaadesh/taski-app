@@ -257,6 +257,24 @@ export default function HudHeader({
       {/* ── Fullscreen + Help buttons ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
         <button
+          onClick={() => window.dispatchEvent(new CustomEvent('taski-briefing'))}
+          title="Morning Briefing"
+          style={headerBtnStyle}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = 'rgba(0,212,255,0.7)';
+            e.currentTarget.style.color       = '#00d4ff';
+            e.currentTarget.style.background  = 'rgba(0,212,255,0.08)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = 'rgba(0,212,255,0.2)';
+            e.currentTarget.style.color       = 'rgba(0,212,255,0.6)';
+            e.currentTarget.style.background  = 'transparent';
+          }}
+        >
+          🌅
+        </button>
+
+        <button
           onClick={toggleFullscreen}
           title={isFullscreen ? 'Exit Fullscreen (F11)' : 'Fullscreen (F11)'}
           style={headerBtnStyle}

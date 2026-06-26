@@ -102,6 +102,39 @@ function hasCalendarAddIntent(text) {
   return CALENDAR_ADD_PATTERNS.some((re) => re.test(text));
 }
 
+// ── Precise 5-route detection for BRANCH 3 ───────────────────────────────────
+
+const EMAIL_EXPLICIT_KEYWORDS = ['email', 'emails', 'gmail', 'inbox', 'unread', 'attachment', 'subject'];
+const CALENDAR_ROUTE_KEYWORDS = [
+  'calendar', 'schedule', 'scheduled', 'event', 'events',
+  'appointment', 'appointments', 'meeting', 'meetings',
+  'busy', 'free', 'available', 'availability',
+];
+const ROUTE_FROM_RE = /\bfrom\s+(?!(?:today|yesterday|tomorrow|this|next|the\s+calendar|my\s+calendar))/i;
+const ROUTE_TIME_RE = /\b(today|tomorrow|yesterday|this\s+week|next\s+week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
+
+function isEmailQuery(text) {
+  const lower = text.toLowerCase();
+  if (EMAIL_EXPLICIT_KEYWORDS.some((kw) => lower.includes(kw))) return true;
+  if (ROUTE_FROM_RE.test(text)) return true;
+  return false;
+}
+
+function isCalendarQuery(text) {
+  const lower = text.toLowerCase();
+  if (CALENDAR_ROUTE_KEYWORDS.some((kw) => lower.includes(kw))) return true;
+  if (ROUTE_TIME_RE.test(lower)) return true;
+  if (MONTH_NAMES.some((m) => lower.includes(m))) return true;
+  if (/\b\d{1,2}(?:st|nd|rd|th)\b/.test(lower)) return true;
+  return false;
+}
+
+function isAmbiguousQuery(text) {
+  // Explicit email keywords (email/emails/gmail/inbox) always resolve to email, not ambiguous
+  if (EMAIL_EXPLICIT_KEYWORDS.some((kw) => text.toLowerCase().includes(kw))) return false;
+  return isEmailQuery(text) && isCalendarQuery(text);
+}
+
 async function extractEventWithClaude(userMessage, todayStr) {
   const system =
     `You are a calendar assistant. Today is ${todayStr}.\n` +
@@ -534,6 +567,14 @@ function detectImageRequest(text, activeSkillTrigger) {
   return null;
 }
 
+// ── Morning briefing phrase detection ────────────────────────────────────────
+
+const BRIEFING_PHRASES = [
+  'morning briefing', 'good morning', 'start my day', 'daily briefing',
+  'daily summary', "what's today", 'whats today', 'brief me',
+  'morning summary', "today's overview", 'run briefing', 'morning report',
+];
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 /**
@@ -580,9 +621,10 @@ export default function ChatBot({
   const [skillMenuIndex,    setSkillMenuIndex]    = useState(0);      // keyboard nav
   const ALL_SKILLS = getAllSkills();
 
-  const bottomRef    = useRef(null);
-  const inputRef     = useRef(null);
-  const fileInputRef = useRef(null);
+  const bottomRef         = useRef(null);
+  const inputRef          = useRef(null);
+  const fileInputRef      = useRef(null);
+  const triggerBriefingRef = useRef(null);
   const isMutedRef = useRef(isMuted); // keep ref in sync for use inside callbacks
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
 
@@ -709,6 +751,15 @@ export default function ChatBot({
   // Start a new chat session on mount
   useEffect(() => {
     sessionIdRef.current = chatHistory.startNewSession();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Listen for taski-briefing event (triggered by header button or auto-briefing)
+  useEffect(() => {
+    function handleBriefingEvent() {
+      triggerBriefingRef.current?.();
+    }
+    window.addEventListener('taski-briefing', handleBriefingEvent);
+    return () => window.removeEventListener('taski-briefing', handleBriefingEvent);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-save after each assistant response (when loading transitions true→false)
@@ -977,6 +1028,97 @@ export default function ChatBot({
     }
   }
 
+  // ── Forced route for disambiguation choice buttons ────────────────────────
+
+  async function processMessageForced(originalQuery, forceRoute) {
+    if (loading) return;
+    setLoading(true);
+    onVisualizerState?.('processing');
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+
+    const timezone2 = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const now2      = new Date();
+    const todayStr2 = now2.toLocaleDateString('en-US', {
+      timeZone: timezone2, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    });
+    const timeStr2 = now2.toLocaleTimeString('en-US', { timeZone: timezone2, timeStyle: 'short' });
+    const dateCtx2 =
+      `Today is ${todayStr2}. Current time is ${timeStr2}. ` +
+      `User's timezone is ${timezone2}.\n` +
+      `Always use this date when the user says "today", "yesterday", "this week", or "this month". ` +
+      `Never ask the user what today's date is.`;
+
+    let system2 = `${CHATBOT_SYSTEM}\n\n${dateCtx2}`;
+    if (activeSkill) {
+      system2 += `\n\n── ACTIVE SKILL: ${activeSkill.name} ──\n${activeSkill.prompt}`;
+      if (activeSubcategory) {
+        system2 += `\n\nActive mode: ${activeSubcategory.label}\nFocus specifically on ${activeSubcategory.label} for this conversation.`;
+      }
+    }
+    const filesWithContent2 = uploadedFiles.filter((f) => f.content);
+    if (filesWithContent2.length > 0) {
+      const fileCtx2 = filesWithContent2.map((f) => `=== FILE: ${f.name} ===\n${f.content}`).join('\n\n');
+      system2 += `\n\nThe user has uploaded the following documents. Use them to answer their questions accurately:\n\n${fileCtx2}`;
+    }
+
+    // Build API messages, skipping the disambiguation assistant message
+    const apiMessages2 = messages
+      .filter((m) => !m.meta?.isAmbiguous)
+      .map(({ role, content }) => ({ role, content }));
+
+    try {
+      if (forceRoute === 'email') {
+        if (!isAuthenticated()) {
+          const reply = "To search your Gmail, please click the **GMAIL** button in the footer to connect your Google account first.";
+          setMessages((prev) => [...prev, { role: 'assistant', content: reply }].slice(-MAX_MESSAGES));
+          speakText(reply);
+          return;
+        }
+        const query     = buildQuery(originalQuery);
+        const emails    = await searchEmails(query);
+        const emailBlk  = formatEmailsForPrompt(emails, query);
+        system2 +=
+          `\n\nThe user asked about their emails. Here are the matching emails found in their Gmail:\n\n` +
+          `${emailBlk}\n\nEach email shows: sender, subject, date (already in user's local timezone ${timezone2}), ` +
+          `and a preview. Answer naturally based on these results. If no emails were found, say so clearly. Never make up emails.`;
+        const rawReply2 = await callClaude(apiMessages2, { system: system2 });
+        const reply     = typeof rawReply2 === 'object' ? rawReply2.text : rawReply2;
+        setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { checked: 'gmail' } }].slice(-MAX_MESSAGES));
+        speakText(reply);
+
+      } else if (forceRoute === 'calendar') {
+        if (!isAuthenticated()) {
+          const reply = "To check your Google Calendar, please click the **CAL** button in the footer to connect your Google account first.";
+          setMessages((prev) => [...prev, { role: 'assistant', content: reply }].slice(-MAX_MESSAGES));
+          speakText(reply);
+          return;
+        }
+        const { start, end } = detectDateRange(originalQuery);
+        const events         = await getCalendarEventsForRange(start, end);
+        const calBlk         = buildCalendarContext(events, start, end);
+        system2 +=
+          `\n\nHere are the user's actual Google Calendar events:\n${calBlk}\n\n` +
+          `Use this real calendar data to answer their scheduling question accurately. Be concise and conversational.`;
+        const rawReply2 = await callClaude(apiMessages2, { system: system2 });
+        const reply     = typeof rawReply2 === 'object' ? rawReply2.text : rawReply2;
+        setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { checked: 'calendar' } }].slice(-MAX_MESSAGES));
+        speakText(reply);
+
+      } else {
+        // forceRoute === 'chat' — plain Claude, no Google data
+        const rawReply2 = await callClaude(apiMessages2, { system: system2 });
+        const reply     = typeof rawReply2 === 'object' ? rawReply2.text : rawReply2;
+        setMessages((prev) => [...prev, { role: 'assistant', content: reply }].slice(-MAX_MESSAGES));
+        speakText(reply);
+      }
+    } catch (err) {
+      setError(err.message);
+      onVisualizerState?.('idle');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   // ── Main send handler ─────────────────────────────────────────────────────
 
   async function handleSend(e) {
@@ -998,6 +1140,57 @@ export default function ChatBot({
 
     // Cancel any ongoing TTS
     if (window.speechSynthesis) window.speechSynthesis.cancel();
+
+    // ════════════════════════════════════════════════════════════════════════
+    // BRANCH BRIEFING — Morning briefing (before all other checks)
+    // ════════════════════════════════════════════════════════════════════════
+    {
+      const isBriefingRequest = BRIEFING_PHRASES.some((p) => text.toLowerCase().includes(p));
+      if (isBriefingRequest) {
+        console.log('[TASKI] Route: MORNING BRIEFING');
+        addMessage({
+          role:    'assistant',
+          content: '🌅 Preparing your morning briefing...\n\nFetching weather, calendar, tasks and emails...',
+        });
+        try {
+          const { getMorningBriefing } = await import('../lib/morningBriefing.js');
+          const briefingData = await getMorningBriefing({ city: 'Maharagama, Sri Lanka' });
+          const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
+          const response = await fetch('https://api.anthropic.com/v1/messages', {
+            method:  'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key':    apiKey,
+              'anthropic-version': '2023-06-01',
+              'anthropic-dangerous-direct-browser-access': 'true',
+            },
+            body: JSON.stringify({
+              model:      'claude-sonnet-4-20250514',
+              max_tokens: 1500,
+              messages:   [{ role: 'user', content: briefingData.context }],
+            }),
+          });
+          const data        = await response.json();
+          const briefingText = data.content?.[0]?.text || 'Could not generate briefing.';
+          removeLastMessage();
+          addMessage({ role: 'assistant', content: briefingText, isBriefing: true });
+          if (!isMutedRef.current && window.speechSynthesis) {
+            const short = briefingText.replace(/[#*`]/g, '').replace(/\n\n/g, '. ').substring(0, 500);
+            speakText(short);
+          }
+        } catch (err) {
+          console.error('[TASKI] Briefing error:', err);
+          removeLastMessage();
+          addMessage({
+            role:    'assistant',
+            content: `Could not complete morning briefing.\n\nError: ${err.message}\n\nMake sure Google Calendar and Gmail are connected in the footer.`,
+          });
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
+    }
 
     // ════════════════════════════════════════════════════════════════════════
     // BRANCH -1 — Slash command / voice skill activation
@@ -1098,15 +1291,12 @@ export default function ChatBot({
     });
     const timeStr = now.toLocaleTimeString('en-US', { timeZone: timezone, timeStyle: 'short' });
 
-    // Debug logging — detect which intents fire
-    const _calDet = hasCalendarIntent(text);
-    const _emlDet = hasEmailReadIntent(text);
-    const _sndDet = hasEmailSendIntent(text);
-    console.log('TASKI Chat Debug:', {
+    if (import.meta.env.DEV) console.log('TASKI Route Debug:', {
       message: text,
-      isCalendarQuery: _calDet,
-      isEmailReadQuery: _emlDet,
-      isEmailSendQuery: _sndDet,
+      isEmailQuery:     isEmailQuery(text),
+      isCalendarQuery:  isCalendarQuery(text),
+      isAmbiguousQuery: isAmbiguousQuery(text),
+      webSearchMode,
     });
 
     const dateContext =
@@ -1422,18 +1612,16 @@ export default function ChatBot({
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // BRANCH 3 — Calendar / Gmail READ / General
+    // BRANCH 3 — 5-route: web search / email / calendar / ambiguous / chat
     // ════════════════════════════════════════════════════════════════════════
     try {
-      let system     = `${CHATBOT_SYSTEM}\n\n${dateContext}`;
+      let system = `${CHATBOT_SYSTEM}\n\n${dateContext}`;
       if (activeSkill) {
         system += `\n\n── ACTIVE SKILL: ${activeSkill.name} ──\n${activeSkill.prompt}`;
         if (activeSubcategory) {
           system += `\n\nActive mode: ${activeSubcategory.label}\nFocus specifically on ${activeSubcategory.label} for this conversation.`;
         }
       }
-
-      // Inject browser-read file contents as context
       const filesWithContent = uploadedFiles.filter((f) => f.content);
       if (filesWithContent.length > 0) {
         const fileContext = filesWithContent
@@ -1441,134 +1629,116 @@ export default function ChatBot({
           .join('\n\n');
         system += `\n\nThe user has uploaded the following documents. Use them to answer their questions accurately:\n\n${fileContext}`;
       }
+      const apiMessages = next.map(({ role, content }) => ({ role, content }));
 
-      let checkedTag = null;
-
-      const wantsCalendar = hasCalendarIntent(text);
-      const wantsEmail    = hasEmailReadIntent(text);
-
-      // Guard: if Google data is needed but user isn't connected, tell them to use the footer.
-      // Never trigger an auth popup from the chatbot — only the footer buttons do that.
-      // Skip this guard entirely when web search mode is active.
-      if (!webSearchMode && (wantsCalendar || wantsEmail) && !isAuthenticated()) {
-        const reply = "To access your Google Calendar or Gmail, please click the **CAL** or **GMAIL** button in the footer to connect your Google account first. It only takes a moment!";
-        setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { checked: null } }].slice(-MAX_MESSAGES));
+      // ── Route 1: Web search ──────────────────────────────────────────────
+      if (webSearchMode) {
+        setIsSearching(true);
+        const rawReply = await callClaude(apiMessages, { system, useWebSearch: true, maxSearches: 5, maxTokens: 1500 });
+        setIsSearching(false);
+        const reply   = typeof rawReply === 'object' ? rawReply.text : rawReply;
+        const sources = (typeof rawReply === 'object' && rawReply.sources) ? rawReply.sources : [];
+        setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { sources } }].slice(-MAX_MESSAGES));
         speakText(reply);
-        setLoading(false);
+        return;
+      }
+
+      // ── Route 2: Email read ──────────────────────────────────────────────
+      if (isEmailQuery(text) && !isAmbiguousQuery(text)) {
+        if (!isAuthenticated()) {
+          const reply = "To search your Gmail, please click the **GMAIL** button in the footer to connect your Google account first.";
+          setMessages((prev) => [...prev, { role: 'assistant', content: reply }].slice(-MAX_MESSAGES));
+          speakText(reply);
+          onVisualizerState?.('idle');
+          return;
+        }
+        let emailFailed = false;
+        try {
+          const query      = buildQuery(text);
+          const emails     = await searchEmails(query);
+          const emailBlock = formatEmailsForPrompt(emails, query);
+          system +=
+            `\n\nThe user asked about their emails. Here are the matching emails found in their Gmail:\n\n` +
+            `${emailBlock}\n\nEach email shows: sender, subject, date (already in user's local timezone ${timezone}), ` +
+            `and a preview. Answer naturally based on these results. If no emails were found, say so clearly. Never make up emails.`;
+        } catch (emailErr) {
+          emailFailed = true;
+          const errMsg = emailErr.message ?? '';
+          let reply = null;
+          if (errMsg === 'GMAIL_AUTH_CANCELLED') {
+            reply = "To search your Gmail I need Google account access. Please try again and complete the sign-in when prompted.";
+            setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { reconnectGmail: true } }].slice(-MAX_MESSAGES));
+          } else if (errMsg === 'GMAIL_SCOPE_MISSING') {
+            reply = "Gmail access is not yet enabled for this session.";
+            setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { reconnectGmail: true } }].slice(-MAX_MESSAGES));
+          } else if (errMsg === 'GMAIL_RATE_LIMIT') {
+            reply = "Gmail is receiving too many requests — please try again in a moment.";
+            setMessages((prev) => [...prev, { role: 'assistant', content: reply }].slice(-MAX_MESSAGES));
+          } else {
+            if (import.meta.env.DEV) console.warn('[Taski Gmail]', errMsg);
+            emailFailed = false; // fall through to Claude without email data
+          }
+          if (reply) { speakText(reply); return; }
+        }
+        if (!emailFailed) {
+          const rawReply = await callClaude(apiMessages, { system });
+          const reply    = typeof rawReply === 'object' ? rawReply.text : rawReply;
+          setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { checked: 'gmail' } }].slice(-MAX_MESSAGES));
+          speakText(reply);
+        }
+        return;
+      }
+
+      // ── Route 3: Calendar read ───────────────────────────────────────────
+      if (isCalendarQuery(text) && !isAmbiguousQuery(text)) {
+        if (!isAuthenticated()) {
+          const reply = "To check your Google Calendar, please click the **CAL** button in the footer to connect your Google account first.";
+          setMessages((prev) => [...prev, { role: 'assistant', content: reply }].slice(-MAX_MESSAGES));
+          speakText(reply);
+          onVisualizerState?.('idle');
+          return;
+        }
+        try {
+          const { start, end } = detectDateRange(text);
+          const events         = await getCalendarEventsForRange(start, end);
+          const calendarBlock  = buildCalendarContext(events, start, end);
+          system +=
+            `\n\nHere are the user's actual Google Calendar events:\n${calendarBlock}\n\n` +
+            `Use this real calendar data to answer their scheduling question accurately. Be concise and conversational.`;
+        } catch (calErr) {
+          const msg   = calErr.message ?? 'Unknown error';
+          const reply = msg.toLowerCase().includes('cancel')
+            ? "I need access to your Google Calendar to answer that. Please try again and complete the sign-in when prompted."
+            : `I was unable to load your calendar just now (${msg}). Please try again in a moment.`;
+          setMessages((prev) => [...prev, { role: 'assistant', content: reply }].slice(-MAX_MESSAGES));
+          speakText(reply);
+          return;
+        }
+        const rawReply = await callClaude(apiMessages, { system });
+        const reply    = typeof rawReply === 'object' ? rawReply.text : rawReply;
+        setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { checked: 'calendar' } }].slice(-MAX_MESSAGES));
+        speakText(reply);
+        return;
+      }
+
+      // ── Route 4: Ambiguous — ask user to choose ──────────────────────────
+      if (isAmbiguousQuery(text)) {
+        const reply = "This could be about your **email** or your **calendar**. Which would you like me to check?";
+        setMessages((prev) => [...prev, {
+          role:    'assistant',
+          content: reply,
+          meta:    { isAmbiguous: true, originalQuery: text },
+        }].slice(-MAX_MESSAGES));
+        speakText("This could be about your email or your calendar. Which would you like me to check?");
         onVisualizerState?.('idle');
         return;
       }
 
-      if (!webSearchMode && (wantsCalendar || wantsEmail)) {
-        const calendarPromise = wantsCalendar
-          ? (async () => {
-              const { start, end } = detectDateRange(text);
-              const events          = await getCalendarEventsForRange(start, end);
-              return buildCalendarContext(events, start, end);
-            })()
-          : Promise.resolve(null);
-
-        const emailPromise = wantsEmail
-          ? (async () => {
-              const query  = buildQuery(text);
-              const emails = await searchEmails(query);
-              return { block: formatEmailsForPrompt(emails, query), query };
-            })()
-          : Promise.resolve(null);
-
-        const [calendarResult, emailResult] = await Promise.allSettled([
-          calendarPromise,
-          emailPromise,
-        ]);
-
-        let calendarBlock = null;
-        let emailBlock    = null;
-
-        if (wantsCalendar) {
-          if (calendarResult.status === 'fulfilled') {
-            calendarBlock = calendarResult.value;
-          } else {
-            const msg = calendarResult.reason?.message ?? 'Unknown error';
-            const reply = msg.toLowerCase().includes('cancel')
-              ? "I need access to your Google Calendar to answer that. Please try again and complete the sign-in when prompted."
-              : `I was unable to load your calendar just now (${msg}). Please try again in a moment.`;
-            setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { checked: null } }].slice(-MAX_MESSAGES));
-            speakText(reply);
-            setLoading(false);
-            return;
-          }
-        }
-
-        if (wantsEmail) {
-          if (emailResult.status === 'fulfilled') {
-            emailBlock = emailResult.value?.block ?? null;
-          } else {
-            const errMsg = emailResult.reason?.message ?? '';
-            let reply = null;
-            if (errMsg === 'GMAIL_AUTH_CANCELLED') {
-              reply = "To search your Gmail I need Google account access. Please try again and complete the sign-in when prompted.";
-              setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { reconnectGmail: true } }].slice(-MAX_MESSAGES));
-            } else if (errMsg === 'GMAIL_SCOPE_MISSING') {
-              reply = "Gmail access is not yet enabled for this session.";
-              setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { reconnectGmail: true } }].slice(-MAX_MESSAGES));
-            } else if (errMsg === 'GMAIL_RATE_LIMIT') {
-              reply = "Gmail is receiving too many requests — please try again in a moment.";
-              setMessages((prev) => [...prev, { role: 'assistant', content: reply }].slice(-MAX_MESSAGES));
-            } else {
-              if (import.meta.env.DEV) console.warn('[Taski Gmail]', errMsg);
-            }
-            if (reply) {
-              speakText(reply);
-              if (!wantsCalendar) { setLoading(false); return; }
-            }
-          }
-        }
-
-        const hasCalData   = calendarBlock !== null;
-        const hasEmailData = emailBlock    !== null;
-
-        if (hasCalData && hasEmailData) {
-          checkedTag = 'both';
-          system +=
-            `\n\nGOOGLE CALENDAR EVENTS:\n${calendarBlock}\n\n` +
-            `GMAIL RESULTS:\n${emailBlock}\n\n` +
-            `Use both data sources above to answer the user's question naturally. ` +
-            `All email times are already in the user's local timezone (${timezone}). ` +
-            `Be concise and conversational. Never make up events or emails not in the data.`;
-        } else if (hasCalData) {
-          checkedTag = 'calendar';
-          system +=
-            `\n\nHere are the user's actual Google Calendar events:\n${calendarBlock}\n\n` +
-            `Use this real calendar data to answer their scheduling question accurately. Be concise and conversational.`;
-        } else if (hasEmailData) {
-          checkedTag = 'gmail';
-          system +=
-            `\n\nThe user asked about their emails. Here are the matching emails found in their Gmail:\n\n` +
-            `${emailBlock}\n\n` +
-            `Each email shows: sender, subject, date (already in user's local timezone ${timezone}), and a preview. ` +
-            `Answer naturally based on these results. If no emails were found, say so clearly. ` +
-            `Never make up emails that are not in the results.`;
-        }
-      }
-
-      const apiMessages = next.map(({ role, content }) => ({ role, content }));
-      if (webSearchMode) setIsSearching(true);
-      const rawReply    = await callClaude(apiMessages, {
-        system,
-        useWebSearch: webSearchMode,
-        ...(webSearchMode ? { maxSearches: 5, maxTokens: 1500 } : {}),
-      });
-      setIsSearching(false);
-
-      const reply   = typeof rawReply === 'object' ? rawReply.text : rawReply;
-      const sources = (typeof rawReply === 'object' && rawReply.sources) ? rawReply.sources : [];
-
-      setMessages((prev) => [...prev, {
-        role:    'assistant',
-        content: reply,
-        meta:    { checked: checkedTag, sources },
-      }].slice(-MAX_MESSAGES));
-
+      // ── Route 5: Normal Claude ───────────────────────────────────────────
+      const rawReply = await callClaude(apiMessages, { system });
+      const reply    = typeof rawReply === 'object' ? rawReply.text : rawReply;
+      const sources  = (typeof rawReply === 'object' && rawReply.sources) ? rawReply.sources : [];
+      setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { sources } }].slice(-MAX_MESSAGES));
       speakText(reply);
 
     } catch (err) {
@@ -1577,18 +1747,78 @@ export default function ChatBot({
       onVisualizerState?.('idle');
     } finally {
       setLoading(false);
-      // Note: visualizer goes to 'speaking' via TTS onstart, or 'idle' via TTS onend.
-      // If muted, speakText() calls onVisualizerState('idle') directly.
+      // visualizer goes to 'speaking' via TTS onstart, or 'idle' via TTS onend.
+      // if muted, speakText() calls onVisualizerState('idle') directly.
     }
   }
 
   // Keep ref current so the voice auto-submit timer always calls the latest version
   handleSendRef.current = handleSend;
 
+  // ── triggerBriefing — called by header button or auto-briefing event ──────
+
+  async function triggerBriefing() {
+    if (loading) return;
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    setLoading(true);
+    onVisualizerState?.('processing');
+    setMessages((prev) => [
+      ...prev,
+      { role: 'user',      content: 'morning briefing' },
+      { role: 'assistant', content: '🌅 Preparing your morning briefing...\n\nFetching weather, calendar, tasks and emails...' },
+    ].slice(-MAX_MESSAGES));
+    try {
+      const { getMorningBriefing } = await import('../lib/morningBriefing.js');
+      const briefingData = await getMorningBriefing({ city: 'Maharagama, Sri Lanka' });
+      const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method:  'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key':    apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model:      'claude-sonnet-4-20250514',
+          max_tokens: 1500,
+          messages:   [{ role: 'user', content: briefingData.context }],
+        }),
+      });
+      const data        = await response.json();
+      const briefingText = data.content?.[0]?.text || 'Could not generate briefing.';
+      setMessages((prev) => [
+        ...prev.slice(0, -1),
+        { role: 'assistant', content: briefingText, isBriefing: true },
+      ]);
+      if (!isMutedRef.current && window.speechSynthesis) {
+        const short = briefingText.replace(/[#*`]/g, '').replace(/\n\n/g, '. ').substring(0, 500);
+        speakText(short);
+      }
+    } catch (err) {
+      console.error('[TASKI] Briefing error:', err);
+      setMessages((prev) => [
+        ...prev.slice(0, -1),
+        {
+          role:    'assistant',
+          content: `Could not complete morning briefing.\n\nError: ${err.message}\n\nMake sure Google Calendar and Gmail are connected in the footer.`,
+        },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  triggerBriefingRef.current = triggerBriefing;
+
   // ── RAG file upload ───────────────────────────────────────────────────────
 
   function addMessage(msg) {
     setMessages((prev) => [...prev, msg].slice(-MAX_MESSAGES));
+  }
+
+  function removeLastMessage() {
+    setMessages((prev) => prev.slice(0, -1));
   }
 
   // Read a browser File object as text (txt / md). Returns null for unsupported types.
@@ -1887,65 +2117,93 @@ export default function ChatBot({
               TASKI
             </div>
 
-        {/* Skill badge / status line */}
-        {activeSkill ? (
-          <div
-            style={{
-              display:    'flex',
-              alignItems: 'center',
-              gap:        '6px',
-              marginTop:  '4px',
-            }}
-          >
-            <div
-              style={{
-                fontFamily:    "'Rajdhani', sans-serif",
-                fontSize:      '10px',
-                fontWeight:    600,
-                letterSpacing: '0.18em',
-                color:         '#00d4ff',
-                textTransform: 'uppercase',
-                background:    'rgba(0,212,255,0.1)',
-                border:        '1px solid rgba(0,212,255,0.3)',
-                borderRadius:  '3px',
-                padding:       '2px 8px',
-              }}
-            >
-              {activeSkill.trigger} — {activeSkill.name.toUpperCase()}
-            </div>
-            <button
-              onClick={clearSkill}
-              aria-label="Clear active skill"
-              style={{
-                background:  'none',
-                border:      'none',
-                cursor:      'pointer',
-                color:       'rgba(0,212,255,0.4)',
-                fontSize:    '12px',
-                lineHeight:  1,
-                padding:     '0 2px',
-                transition:  'color 150ms',
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = '#ff2d55'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(0,212,255,0.4)'; }}
-            >
-              ×
-            </button>
-          </div>
-        ) : (
+        {/* Dynamic header badges: CLAUDE AI · skill · WEB SEARCH */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '4px', flexWrap: 'wrap' }}>
+          {/* Always-on CLAUDE AI badge */}
           <div
             style={{
               fontFamily:    "'Rajdhani', sans-serif",
               fontSize:      '10px',
-              letterSpacing: '0.2em',
-              color:         'rgba(0,212,255,0.4)',
+              fontWeight:    600,
+              letterSpacing: '0.15em',
+              color:         'rgba(0,212,255,0.35)',
               textTransform: 'uppercase',
-              marginTop:     '4px',
+              background:    'rgba(0,212,255,0.04)',
+              border:        '1px solid rgba(0,212,255,0.12)',
+              borderRadius:  '3px',
+              padding:       '2px 6px',
             }}
           >
-            AI ASSISTANT ONLINE
+            CLAUDE AI
           </div>
-        )}
+
+          {/* Active skill badge */}
+          {activeSkill && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+              <div
+                style={{
+                  fontFamily:    "'Rajdhani', sans-serif",
+                  fontSize:      '10px',
+                  fontWeight:    600,
+                  letterSpacing: '0.12em',
+                  color:         '#00d4ff',
+                  textTransform: 'uppercase',
+                  background:    'rgba(0,212,255,0.1)',
+                  border:        '1px solid rgba(0,212,255,0.35)',
+                  borderRadius:  '3px',
+                  padding:       '2px 7px',
+                }}
+              >
+                {activeSkill.icon} {activeSkill.trigger.slice(1).toUpperCase()}
+              </div>
+              <button
+                onClick={clearSkill}
+                aria-label="Clear active skill"
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'rgba(0,212,255,0.4)', fontSize: '12px', lineHeight: 1,
+                  padding: '0 2px', transition: 'color 150ms',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = '#ff2d55'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(0,212,255,0.4)'; }}
+              >×</button>
+            </div>
+          )}
+
+          {/* Web search badge */}
+          {webSearchMode && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+              <div
+                style={{
+                  fontFamily:    "'Rajdhani', sans-serif",
+                  fontSize:      '10px',
+                  fontWeight:    600,
+                  letterSpacing: '0.12em',
+                  color:         '#00d4ff',
+                  textTransform: 'uppercase',
+                  background:    'rgba(0,212,255,0.12)',
+                  border:        '1px solid #00d4ff',
+                  borderRadius:  '3px',
+                  padding:       '2px 7px',
+                  boxShadow:     '0 0 8px rgba(0,212,255,0.15)',
+                }}
+              >
+                🌐 WEB
+              </div>
+              <button
+                onClick={() => setWebSearchMode(false)}
+                aria-label="Disable web search"
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'rgba(0,212,255,0.4)', fontSize: '12px', lineHeight: 1,
+                  padding: '0 2px', transition: 'color 150ms',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = '#ff2d55'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(0,212,255,0.4)'; }}
+              >×</button>
+            </div>
+          )}
+        </div>
           </div>
 
           {/* Header icon buttons */}
@@ -2064,6 +2322,29 @@ export default function ChatBot({
             >
               START NEW CHAT
             </button>
+          </div>
+        )}
+
+        {/* ── Skill + web search tip banner ── */}
+        {activeSkill && webSearchMode && (
+          <div
+            style={{
+              padding:      '5px 12px',
+              background:   'rgba(0,212,255,0.04)',
+              border:       '1px solid rgba(0,212,255,0.12)',
+              borderRadius: '4px',
+              fontSize:     '11px',
+              fontFamily:   "'Rajdhani', sans-serif",
+              letterSpacing:'0.05em',
+              color:        'rgba(0,212,255,0.45)',
+              flexShrink:   0,
+              display:      'flex',
+              alignItems:   'center',
+              gap:          '6px',
+            }}
+          >
+            <span style={{ color: '#00d4ff', fontSize: '12px', flexShrink: 0 }}>💡</span>
+            {activeSkill.name} skill + web search active — Claude will search the web using {activeSkill.name.toLowerCase()} context
           </div>
         )}
 
@@ -2319,6 +2600,8 @@ export default function ChatBot({
                   sources={msg.meta?.sources}
                   reconnectGmail={msg.meta?.reconnectGmail}
                   onReconnectGoogle={handleReconnectGoogle}
+                  meta={msg.meta}
+                  onAmbiguousChoice={processMessageForced}
                 />
               </div>
             )}

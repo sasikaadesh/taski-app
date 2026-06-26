@@ -111,6 +111,19 @@ const SECTIONS = [
     ],
   },
   {
+    title: 'MORNING BRIEFING',
+    items: [
+      'Click 🌅 in the top right header or say "morning briefing" in the chat',
+      'TASKI automatically fetches: ☁️ Today\'s weather forecast for Maharagama with hourly rain chances',
+      '🗓 All your calendar events for today',
+      '✅ Pending todos due today or tomorrow',
+      '📧 Important emails about payments, subscriptions and urgent matters',
+      'Claude formats everything into a clear friendly briefing and reads it aloud',
+      'Auto-briefing runs once each morning when you open Taski between 6am–11am',
+      'Say any of these to trigger it: "morning briefing" · "good morning" · "start my day" · "brief me" · "what\'s today"',
+    ],
+  },
+  {
     title: 'VOICE CONTROL',
     items: [
       'Click the microphone button or press Ctrl+Shift+V to start speaking',

@@ -19,6 +19,8 @@ export default function ChatMessage({
   sources,
   reconnectGmail,
   onReconnectGoogle,
+  meta,
+  onAmbiguousChoice,
 }) {
   const html = useMemo(() => {
     if (!message) return '';
@@ -155,6 +157,47 @@ export default function ChatMessage({
         >
           Reconnect Google →
         </button>
+      )}
+
+      {/* Disambiguation choice buttons */}
+      {meta?.isAmbiguous && onAmbiguousChoice && (
+        <div style={{ marginTop: '12px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+          {[
+            { label: '📧 Search Emails',  route: 'email'    },
+            { label: '🗓 Check Calendar', route: 'calendar' },
+            { label: '💬 Just Ask Claude', route: 'chat'   },
+          ].map(({ label, route }) => (
+            <button
+              key={route}
+              onClick={() => onAmbiguousChoice(meta.originalQuery, route)}
+              style={{
+                background:    'rgba(0,212,255,0.06)',
+                border:        '1px solid rgba(0,212,255,0.3)',
+                borderRadius:  '4px',
+                padding:       '5px 10px',
+                fontFamily:    "'Rajdhani', sans-serif",
+                fontSize:      '11px',
+                fontWeight:    600,
+                letterSpacing: '0.05em',
+                color:         'rgba(0,212,255,0.7)',
+                cursor:        'pointer',
+                transition:    'all 0.15s',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background   = 'rgba(0,212,255,0.15)';
+                e.currentTarget.style.borderColor  = '#00d4ff';
+                e.currentTarget.style.color        = '#00d4ff';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background   = 'rgba(0,212,255,0.06)';
+                e.currentTarget.style.borderColor  = 'rgba(0,212,255,0.3)';
+                e.currentTarget.style.color        = 'rgba(0,212,255,0.7)';
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       )}
     </div>
   );

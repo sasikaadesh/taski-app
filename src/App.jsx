@@ -144,6 +144,27 @@ export default function App() {
     setAmbientVolume(val / 100);
   }
 
+  // ── Auto morning briefing ─────────────────────────────────────────────────
+  const [briefingShown, setBriefingShown] = useState(false);
+
+  useEffect(() => {
+    const lastBriefing = localStorage.getItem('taski_last_briefing');
+    const today        = new Date().toISOString().split('T')[0];
+    const hour         = new Date().getHours();
+    const isMorning    = hour >= 6 && hour <= 11;
+
+    if (isMorning && lastBriefing !== today) {
+      const timer = setTimeout(() => {
+        if (!briefingShown) {
+          setBriefingShown(true);
+          localStorage.setItem('taski_last_briefing', today);
+          window.dispatchEvent(new CustomEvent('taski-briefing'));
+        }
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── UI modals + toggles ───────────────────────────────────────────────────
   const [helpModalOpen,     setHelpModalOpen]     = useState(false);
   const [websitePreviewData, setWebsitePreviewData] = useState(null);
