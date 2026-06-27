@@ -584,6 +584,19 @@ const BRIEFING_PHRASES = [
  *   registerMicSupport(bool)  — inform App whether speech API is supported
  *   isMuted                   — when true, skip TTS
  */
+// ── Panel auto-expand keywords ────────────────────────────────────────────────
+
+const CALENDAR_EXPAND_WORDS = [
+  'calendar', 'schedule', 'meeting', 'events', 'my day', 'appointments',
+  'show calendar', 'open calendar', 'what do i have', 'am i free',
+  'add event', 'create meeting',
+];
+
+const TODO_EXPAND_WORDS = [
+  'todo', 'to do', 'tasks', 'my tasks', 'pending', 'show todos', 'open todos',
+  'add todo', 'add task', 'my list', 'what should i do', 'remind me',
+];
+
 export default function ChatBot({
   onVisualizerState,
   registerMicToggle,
@@ -591,6 +604,8 @@ export default function ChatBot({
   isMuted,
   onWebsiteGenerated,
   registerChatInsert,
+  isCollapsed = false,
+  onExpand,
 }) {
   const [messages,           setMessages]           = useState([]);
   const [input,              setInput]              = useState('');
@@ -1140,6 +1155,16 @@ export default function ChatBot({
 
     // Cancel any ongoing TTS
     if (window.speechSynthesis) window.speechSynthesis.cancel();
+
+    // ── Auto-expand panels based on message content ──────────────────────────
+    const msgLower = text.toLowerCase();
+    window.dispatchEvent(new CustomEvent('taski-expand-panel', { detail: { panel: 'chat' } }));
+    if (isCalendarQuery(text) || CALENDAR_EXPAND_WORDS.some((w) => msgLower.includes(w))) {
+      window.dispatchEvent(new CustomEvent('taski-expand-panel', { detail: { panel: 'calendar' } }));
+    }
+    if (TODO_EXPAND_WORDS.some((w) => msgLower.includes(w))) {
+      window.dispatchEvent(new CustomEvent('taski-expand-panel', { detail: { panel: 'todo' } }));
+    }
 
     // ════════════════════════════════════════════════════════════════════════
     // BRANCH BRIEFING — Morning briefing (before all other checks)
@@ -2043,7 +2068,74 @@ export default function ChatBot({
         />
       )}
 
-      {/* ── Header ── */}
+      {/* ── Collapsed compact header ── */}
+      {isCollapsed && (
+        <div style={{
+          height:          '32px',
+          display:         'flex',
+          alignItems:      'center',
+          justifyContent:  'space-between',
+          padding:         '0 10px',
+          borderBottom:    '1px solid rgba(0,212,255,0.1)',
+          flexShrink:      0,
+          background:      'rgba(0,212,255,0.02)',
+        }}>
+          <span style={{
+            fontFamily:    "'Orbitron', sans-serif",
+            fontSize:      '10px',
+            color:         '#00d4ff',
+            letterSpacing: '0.1em',
+          }}>TASKI</span>
+          <button
+            onClick={onExpand}
+            aria-label="Expand chat"
+            style={{
+              background: 'transparent',
+              border:     '1px solid rgba(0,212,255,0.25)',
+              borderRadius: '50%',
+              width:      '22px',
+              height:     '22px',
+              cursor:     'pointer',
+              color:      '#00d4ff',
+              fontSize:   '12px',
+              display:    'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding:    0,
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,212,255,0.1)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+          >
+            ↑
+          </button>
+        </div>
+      )}
+
+      {/* ── Last message preview when collapsed ── */}
+      {isCollapsed && messages.length > 0 && (
+        <div style={{
+          flex:          1,
+          padding:       '6px 10px',
+          fontSize:      '10px',
+          color:         'rgba(0,212,255,0.3)',
+          fontFamily:    "'Rajdhani', sans-serif",
+          overflow:      'hidden',
+          textOverflow:  'ellipsis',
+          whiteSpace:    'nowrap',
+          display:       'flex',
+          alignItems:    'center',
+          cursor:        'pointer',
+          minHeight:     0,
+        }}
+        onClick={onExpand}
+        >
+          {(messages[messages.length - 1]?.content ?? '').substring(0, 60)}
+          {(messages[messages.length - 1]?.content?.length ?? 0) > 60 ? '…' : ''}
+        </div>
+      )}
+
+      {/* ── Full header (when expanded) ── */}
+      {!isCollapsed && (
       <div
         style={{
           padding:      '18px 20px 14px',
@@ -2261,8 +2353,10 @@ export default function ChatBot({
         </div>
         )}
       </div>
+      )}{/* end !isCollapsed header */}
 
-      {/* ── Messages area ── */}
+      {/* ── Messages area (hidden when collapsed) ── */}
+      {!isCollapsed && (
       <div
         style={{
           flex:          1,
@@ -2669,15 +2763,16 @@ export default function ChatBot({
 
         <div ref={bottomRef} />
       </div>
+      )}{/* end !isCollapsed messages */}
 
-      {/* ── Input area ── */}
+      {/* ── Input area (always visible) ── */}
       <form
         onSubmit={handleSend}
         style={{
-          padding:       '12px 14px 16px',
+          padding:       isCollapsed ? '6px 8px' : '12px 14px 16px',
           borderTop:     '1px solid rgba(0,212,255,0.12)',
           flexShrink:    0,
-          minHeight:     '60px',
+          minHeight:     isCollapsed ? 'unset' : '60px',
           background:    'rgba(0,0,0,0.2)',
           position:      'relative',
         }}
@@ -2971,10 +3066,10 @@ export default function ChatBot({
         )}
 
         {/* Row: [Upload] [Mic] [Stop] [input] [Send] */}
-        <div style={{ display: 'flex', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: isCollapsed ? '4px' : '8px' }}>
 
-          {/* Upload button */}
-          <button
+          {/* Upload button — hidden when collapsed */}
+          {!isCollapsed && <button
             type="button"
             onClick={handleFileUpload}
             title="Upload document to knowledge base"
@@ -3011,9 +3106,10 @@ export default function ChatBot({
             }}
           >
             📎
-          </button>
+          </button>}
 
-          {/* Web search toggle button */}
+          {/* Web search toggle button — hidden when collapsed */}
+          {!isCollapsed &&
           <button
             type="button"
             onClick={() => setWebSearchMode((prev) => !prev)}
@@ -3050,7 +3146,7 @@ export default function ChatBot({
             }}
           >
             🌐
-          </button>
+          </button>}
 
           {/* Mic button — 3 states: idle / recording (cyan) / transcribing (amber) */}
           {speech.isSupported && (
@@ -3160,9 +3256,10 @@ export default function ChatBot({
             ref={inputRef}
             type="text"
             placeholder={
-              speech.isProcessing  ? 'Transcribing your speech…'                                          :
-              speech.isListening   ? 'Recording — click ⏹ to stop…'                                       :
+              speech.isProcessing  ? 'Transcribing…'                                                      :
+              speech.isListening   ? 'Recording…'                                                         :
               pendingEmailContext  ? 'Enter email address…'                                               :
+              isCollapsed          ? 'Ask TASKI…'                                                         :
               activeSubcategory   ? `Describe your image — ${activeSubcategory.label} style will be applied…` :
                                     'Ask TASKI anything… (type / for skills)'
             }
@@ -3193,11 +3290,11 @@ export default function ChatBot({
                   ? '1px solid rgba(0,212,255,0.4)'
                   : '1px solid rgba(0,212,255,0.15)',
               borderRadius:  '4px',
-              padding:       '0 12px',
-              height:        '40px',
+              padding:       isCollapsed ? '0 8px' : '0 12px',
+              height:        isCollapsed ? '32px' : '40px',
               color:         'var(--color-text-primary)',
               fontFamily:    "'Rajdhani', sans-serif",
-              fontSize:      '14px',
+              fontSize:      isCollapsed ? '11px' : '14px',
               letterSpacing: '0.02em',
               outline:       'none',
               caretColor:    '#00d4ff',
@@ -3210,6 +3307,7 @@ export default function ChatBot({
                   : 'none',
             }}
             onFocus={(e) => {
+              if (isCollapsed) { onExpand?.(); }
               if (!speech.isListening) {
                 e.target.style.borderColor = 'rgba(0,212,255,0.4)';
                 e.target.style.boxShadow   = '0 0 0 3px rgba(0,212,255,0.08)';
@@ -3233,7 +3331,7 @@ export default function ChatBot({
               border:         '1px solid rgba(0,212,255,0.5)',
               borderRadius:   '4px',
               padding:        '0 14px',
-              height:         '40px',
+              height:         isCollapsed ? '32px' : '40px',
               color:          '#00d4ff',
               cursor:         loading || !input.trim() ? 'not-allowed' : 'pointer',
               display:        'flex',

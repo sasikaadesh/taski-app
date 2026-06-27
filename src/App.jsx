@@ -1,19 +1,19 @@
-// App — HUD overlay layout: circuit background · central visualizer · floating panels · header/footer.
+// App — HUD overlay layout: circuit background · central visualizer · floating draggable panels · header/footer.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import TodoForm         from './components/TodoForm';
-import TodoList         from './components/TodoList';
-import ChatBot          from './components/ChatBot';
-import FolderOrganizer  from './components/FolderOrganizer';
-import JarvisVisualizer from './components/JarvisVisualizer';
-import StartupOverlay   from './components/StartupOverlay';
-import HelpModal        from './components/HelpModal';
-import WebsitePreview   from './components/WebsitePreview';
-import QuickTodoList    from './components/QuickTodoList';
-import FloatingPanel    from './components/FloatingPanel';
-import CircuitBackground from './components/CircuitBackground';
-import HudHeader        from './components/HudHeader';
-import HudFooter        from './components/HudFooter';
+import TodoForm              from './components/TodoForm';
+import TodoList              from './components/TodoList';
+import ChatBot               from './components/ChatBot';
+import FolderOrganizer       from './components/FolderOrganizer';
+import JarvisVisualizer      from './components/JarvisVisualizer';
+import StartupOverlay        from './components/StartupOverlay';
+import HelpModal             from './components/HelpModal';
+import WebsitePreview        from './components/WebsitePreview';
+import QuickTodoList         from './components/QuickTodoList';
+import CircuitBackground     from './components/CircuitBackground';
+import HudHeader             from './components/HudHeader';
+import HudFooter             from './components/HudFooter';
+import { useDraggable }      from './hooks/useDraggable';
 import { createCalendarEvent } from './lib/googleCalendar';
 import {
   startAmbient,
@@ -61,7 +61,6 @@ export default function App() {
 
   function handleAdd(todo) {
     setTodos((prev) => [todo, ...prev]);
-    setCalendarFormOpen(false);
     if (todo.date) {
       createCalendarEvent(todo)
         .then(() =>
@@ -166,12 +165,18 @@ export default function App() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── UI modals + toggles ───────────────────────────────────────────────────
-  const [helpModalOpen,     setHelpModalOpen]     = useState(false);
+  const [helpModalOpen,      setHelpModalOpen]      = useState(false);
   const [websitePreviewData, setWebsitePreviewData] = useState(null);
-  const [calendarFormOpen,   setCalendarFormOpen]   = useState(false);
   const [folderOrgOpen,      setFolderOrgOpen]      = useState(false);
-  const [chatMinimized,      setChatMinimized]       = useState(false);
-  const [quickTodoFormOpen,  setQuickTodoFormOpen]  = useState(false);
+
+  // ── Panel z-index ordering (last in array = on top) ──────────────────────
+  const [panelOrder, setPanelOrder] = useState(['calendar', 'todo', 'chat']);
+  function bringToFront(id) {
+    setPanelOrder((prev) => [...prev.filter((p) => p !== id), id]);
+  }
+
+  // ── Window width for Jarvis sizing ────────────────────────────────────────
+  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
 
   // ── Fullscreen change → force layout recalc ──────────────────────────────
   useEffect(() => {
@@ -182,33 +187,47 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => {
+    function onResize() { setWindowWidth(window.innerWidth); }
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  const vizSize = Math.min(Math.max(windowWidth * 0.45, 280), 560);
+
   return (
     <div style={{
-      display:        'flex',
-      flexDirection:  'column',
-      height:         '100vh',
-      width:          '100vw',
-      overflow:       'hidden',
-      position:       'relative',
+      display:       'flex',
+      flexDirection: 'column',
+      height:        '100vh',
+      width:         '100vw',
+      overflow:      'hidden',
+      position:      'relative',
     }}>
       {!startupDone && (
         <StartupOverlay onDone={handleStartupDone} isMuted={isMuted} />
       )}
 
-      {/* ════ HUD Header — flex item, never clips in fullscreen ════ */}
-      <HudHeader
-        isAmbientPlaying={isAmbientPlaying}
-        ambientVolume={ambientVolume}
-        onAmbientToggle={toggleAmbient}
-        onVolumeChange={handleAmbientVolume}
-        onHelp={() => setHelpModalOpen(true)}
-      />
+      {/* ════ HUD Header ════ */}
+      <div style={{ flexShrink: 0, height: '52px', zIndex: 100, position: 'relative' }}>
+        <HudHeader
+          isAmbientPlaying={isAmbientPlaying}
+          ambientVolume={ambientVolume}
+          onAmbientToggle={toggleAmbient}
+          onVolumeChange={handleAmbientVolume}
+          onHelp={() => setHelpModalOpen(true)}
+        />
+      </div>
 
-      {/* ════ Content area — fills space between header and footer ════ */}
-      <div style={{ flex: 1, position: 'relative', overflow: 'hidden', minHeight: 0 }}>
-
+      {/* ════ Content area — full screen with Jarvis centered ════ */}
+      <div style={{
+        flex:      1,
+        position:  'relative',
+        overflow:  'hidden',
+        minHeight: 0,
+      }}>
         {/* ── Background layer ── */}
-        <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 0 }}>
+        <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 0, pointerEvents: 'none' }}>
           <CircuitBackground />
           <div aria-hidden="true" style={{
             position: 'absolute', inset: 0, pointerEvents: 'none',
@@ -220,197 +239,71 @@ export default function App() {
           }} />
         </div>
 
-        {/* ── Visualizer (behind panels, above background) ── */}
-        <div
-          aria-label="TASKI central visualizer"
-          style={{
-            position:      'absolute',
-            top:           '50%',
-            left:          '50%',
-            transform:     'translate(-50%, -50%)',
-            zIndex:        2,
-            pointerEvents: 'none',
-            display:       'flex',
-            flexDirection: 'column',
-            alignItems:    'center',
-          }}
-        >
+        {/* ── Jarvis Visualizer — centered ── */}
+        <div style={{
+          position:       'absolute',
+          inset:          0,
+          display:        'flex',
+          alignItems:     'center',
+          justifyContent: 'center',
+          zIndex:         2,
+          pointerEvents:  'none',
+        }}>
           <JarvisVisualizer
             state={visualizerState}
             onMicClick={handleMicClick}
             isMuted={isMuted}
             onMuteToggle={() => setIsMuted((m) => !m)}
             isSupported={isMicSupported}
+            size={vizSize}
           />
         </div>
 
-        {/* ── Left Upper Panel — Calendar Tasks ── */}
-        <div style={{
-          position:  'absolute',
-          top:       '10px',
-          left:      '16px',
-          width:     '380px',
-          zIndex:    10,
-          animation: 'panelFadeIn 0.3s ease',
-        }}>
-          <FloatingPanel
-            title="CALENDAR TASKS"
-            icon="🗓"
-            badge={pending.length || undefined}
-            headerActions={
-              <ToggleAddBtn
-                open={calendarFormOpen}
-                onClick={() => setCalendarFormOpen((v) => !v)}
-              />
-            }
-          >
-            {/* Collapsible add form */}
-            <div style={{
-              overflow:   'hidden',
-              maxHeight:  calendarFormOpen ? '280px' : '0',
-              transition: 'max-height 300ms ease',
-              flexShrink: 0,
-            }}>
-              <div style={{ padding: '8px 12px 6px', borderBottom: '1px solid rgba(0,212,255,0.08)' }}>
-                <TodoForm onAdd={handleAdd} />
-              </div>
-            </div>
+        {/* ════ Floating Panel — Calendar Tasks ════ */}
+        <CalendarPanel
+          panelZIndex={panelOrder.indexOf('calendar') + 10}
+          onBringToFront={() => bringToFront('calendar')}
+          pending={pending}
+          completed={completed}
+          handleAdd={handleAdd}
+          handleToggle={handleToggle}
+          handleDelete={handleDelete}
+        />
 
-            {/* Task list — scrolls when content overflows */}
-            <div
-              className="task-list panel-scroll"
-              style={{
-                maxHeight:  calendarFormOpen ? '0' : 'calc(45vh - 60px)',
-                overflowY:  'auto',
-                overflowX:  'hidden',
-                minHeight:  0,
-                padding:    calendarFormOpen ? '0' : '8px 10px',
-                transition: 'max-height 300ms ease, padding 300ms ease',
-              }}
-            >
-              {pending.length > 0 ? (
-                <>
-                  <SectionLabel>Pending · {pending.length}</SectionLabel>
-                  <TodoList todos={pending} onToggle={handleToggle} onDelete={handleDelete} />
-                </>
-              ) : null}
-              {completed.length > 0 ? (
-                <>
-                  <SectionLabel>Done · {completed.length}</SectionLabel>
-                  <TodoList todos={completed} onToggle={handleToggle} onDelete={handleDelete} />
-                </>
-              ) : null}
-              {todos.length === 0 && (
-                <EmptyState text="No calendar tasks yet" />
-              )}
-            </div>
-          </FloatingPanel>
-        </div>
+        {/* ════ Floating Panel — Quick Todo List ════ */}
+        <TodoPanel
+          panelZIndex={panelOrder.indexOf('todo') + 10}
+          onBringToFront={() => bringToFront('todo')}
+          setQuickTodoCount={setQuickTodoCount}
+          quickTodoCount={quickTodoCount}
+        />
 
-        {/* ── Left Lower Panel — To Do List ── */}
-        <div style={{
-          position:  'absolute',
-          bottom:    '10px',
-          left:      '16px',
-          width:     '380px',
-          zIndex:    10,
-          animation: 'panelFadeIn 0.3s ease 0.1s both',
-        }}>
-          <FloatingPanel
-            title="TO DO LIST"
-            icon="✓"
-            badge={quickTodoCount || undefined}
-            headerActions={
-              <ToggleAddBtn
-                open={quickTodoFormOpen}
-                onClick={() => setQuickTodoFormOpen((v) => !v)}
-              />
-            }
-          >
-            <div style={{
-              display:        'flex',
-              flexDirection:  'column',
-              maxHeight:      'calc(45vh - 60px)',
-              overflow:       'hidden',
-            }}>
-              <QuickTodoList onCountChange={setQuickTodoCount} showForm={quickTodoFormOpen} />
-            </div>
-          </FloatingPanel>
-        </div>
+        {/* ════ Floating Panel — Chat ════ */}
+        <ChatPanel
+          panelZIndex={panelOrder.indexOf('chat') + 10}
+          onBringToFront={() => bringToFront('chat')}
+          visualizerState={visualizerState}
+          setVisualizerState={setVisualizerState}
+          registerMicToggle={registerMicToggle}
+          registerMicSupport={registerMicSupport}
+          isMuted={isMuted}
+          setIsMuted={setIsMuted}
+          isMicSupported={isMicSupported}
+          setWebsitePreviewData={setWebsitePreviewData}
+          registerChatInsert={registerChatInsert}
+        />
+      </div>
 
-        {/* ── Right Panel — Chat ── */}
-        <div style={{
-          position:     'absolute',
-          top:          '10px',
-          right:        '16px',
-          width:        '340px',
-          height:       chatMinimized ? '44px' : 'calc(100% - 20px)',
-          zIndex:       10,
-          borderRadius: '12px',
-          overflow:     'hidden',
-          border:       '1px solid rgba(0,212,255,0.22)',
-          boxShadow:
-            '0 0 0 1px rgba(0,212,255,0.08), 0 8px 32px rgba(0,0,0,0.65), inset 0 1px 0 rgba(0,212,255,0.1)',
-          background:   'rgba(2, 15, 35, 0.82)',
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
-          transition:   'height 300ms ease',
-          animation:    'panelFadeIn 0.3s ease 0.05s both',
-        }}>
-          <div aria-hidden="true" style={{
-            position: 'absolute', top: 0, left: '5%', width: '90%', height: '1px', zIndex: 1,
-            background: 'linear-gradient(90deg,transparent,rgba(0,212,255,0.8) 30%,rgba(0,212,255,1) 50%,rgba(0,212,255,0.8) 70%,transparent)',
-          }} />
-          {chatMinimized ? (
-            <button
-              onClick={() => setChatMinimized(false)}
-              style={{
-                width: '100%', height: '44px', background: 'none', border: 'none',
-                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px',
-                padding: '0 14px',
-              }}
-            >
-              <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#00d4ff', boxShadow: '0 0 6px #00d4ff', animation: 'statusPulse 2s ease-in-out infinite' }} />
-              <span style={{ fontFamily: "'Orbitron'", fontSize: '12px', letterSpacing: '0.12em', color: '#00d4ff' }}>TASKI · ONLINE</span>
-            </button>
-          ) : (
-            <>
-              <button
-                onClick={() => setChatMinimized(true)}
-                aria-label="Minimize chat"
-                style={{
-                  position: 'absolute', top: '10px', right: '10px', zIndex: 10,
-                  background: 'none', border: 'none', cursor: 'pointer',
-                  color: 'rgba(0,212,255,0.4)', fontSize: '16px', lineHeight: 1, padding: '2px 6px',
-                  transition: 'color 150ms',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = '#00d4ff'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(0,212,255,0.4)'; }}
-              >
-                –
-              </button>
-              <ChatBot
-                onVisualizerState={setVisualizerState}
-                registerMicToggle={registerMicToggle}
-                registerMicSupport={registerMicSupport}
-                isMuted={isMuted}
-                onWebsiteGenerated={setWebsitePreviewData}
-                registerChatInsert={registerChatInsert}
-              />
-            </>
-          )}
-        </div>
-
-      </div>{/* end content area */}
-
-      {/* ════ HUD Footer — flex item, always visible in fullscreen ════ */}
-      <HudFooter
-        onFiles={() => setFolderOrgOpen(true)}
-        onImagen={() => chatInsertRef.current?.('/imagen ')}
-        onWebsite={() => chatInsertRef.current?.('/website ')}
-        onSkills={() => chatInsertRef.current?.('/')}
-        visualizerState={visualizerState}
-      />
+      {/* ════ HUD Footer — flex item, always visible ════ */}
+      <div style={{ flexShrink: 0, height: '48px', zIndex: 100, position: 'relative' }}>
+        <HudFooter
+          onFiles={() => setFolderOrgOpen(true)}
+          onImagen={() => chatInsertRef.current?.('/imagen ')}
+          onWebsite={() => chatInsertRef.current?.('/website ')}
+          onSkills={() => chatInsertRef.current?.('/')}
+          visualizerState={visualizerState}
+        />
+      </div>
 
       {/* ════ Folder Organizer Modal ════ */}
       {folderOrgOpen && (
@@ -461,8 +354,16 @@ export default function App() {
         />
       )}
 
-      {/* ── Panel scrollbar styles ── */}
+      {/* ── Panel scrollbar + animation styles ── */}
       <style>{`
+        @keyframes panelExpand {
+          from { opacity: 0; transform: translateY(-6px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes slideDown {
+          from { opacity: 0; transform: translateY(-6px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
         .panel-scroll,
         .task-list,
         .todo-list-scroll {
@@ -486,34 +387,503 @@ export default function App() {
   );
 }
 
+// ── Floating Calendar Tasks Panel ─────────────────────────────────────────────
+
+function CalendarPanel({
+  panelZIndex, onBringToFront,
+  pending, completed, handleAdd, handleToggle, handleDelete,
+}) {
+  const { isDragging, onMouseDown, dragStyle } = useDraggable({
+    x: 20, y: 72,
+    storageKey: 'taski_pos_calendar',
+  });
+
+  const [isExpanded, setIsExpanded] = useState(() => {
+    return localStorage.getItem('taski_calendar_expanded') === 'true';
+  });
+  const [showForm, setShowForm] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('taski_calendar_expanded', String(isExpanded));
+  }, [isExpanded]);
+
+  useEffect(() => {
+    function onExpandEvt(e) {
+      if (e.detail?.panel === 'calendar') setIsExpanded(true);
+    }
+    window.addEventListener('taski-expand-panel', onExpandEvt);
+    window.addEventListener('taski-panel-expand', onExpandEvt);
+    return () => {
+      window.removeEventListener('taski-expand-panel', onExpandEvt);
+      window.removeEventListener('taski-panel-expand', onExpandEvt);
+    };
+  }, []);
+
+  function handleCollapse() { setIsExpanded(false); setShowForm(false); }
+  function handleToggleForm() {
+    if (!isExpanded) setIsExpanded(true);
+    setShowForm((p) => !p);
+  }
+
+  function onAdd(todo) {
+    handleAdd(todo);
+    setShowForm(false);
+  }
+
+  return (
+    <div
+      onClick={onBringToFront}
+      style={{
+        ...dragStyle,
+        zIndex: isDragging ? 1000 : panelZIndex,
+        width: '300px',
+        maxHeight: isExpanded ? 'calc(55vh - 80px)' : '44px',
+        overflow: 'hidden',
+        transition: 'max-height 0.3s cubic-bezier(0.16,1,0.3,1)',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      {/* Header — always visible */}
+      <div
+        onMouseDown={onMouseDown}
+        style={{
+          height: '44px', minHeight: '44px', flexShrink: 0,
+          display: 'flex', alignItems: 'center', padding: '0 10px', gap: '6px',
+          background: 'rgba(2,15,35,0.92)',
+          backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+          border: '1px solid rgba(0,212,255,0.25)',
+          borderRadius: isExpanded ? '10px 10px 0 0' : '10px',
+          cursor: isDragging ? 'grabbing' : 'grab',
+          userSelect: 'none',
+          transition: 'border-radius 0.2s',
+        }}
+      >
+        <span style={{ color: 'rgba(0,212,255,0.2)', fontSize: '14px', flexShrink: 0 }}>⠿</span>
+        <span style={{
+          fontSize: '10px', fontFamily: "'Rajdhani', sans-serif", fontWeight: 600,
+          color: '#00d4ff', letterSpacing: '0.12em', textTransform: 'uppercase',
+          flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          🗓 CALENDAR TASKS
+        </span>
+        {pending.length > 0 && (
+          <span style={{
+            background: 'rgba(0,212,255,0.12)', border: '1px solid rgba(0,212,255,0.3)',
+            borderRadius: '10px', padding: '1px 6px', fontSize: '10px',
+            fontFamily: "'Rajdhani', sans-serif", fontWeight: 600, color: '#00d4ff', flexShrink: 0,
+          }}>
+            {pending.length}
+          </span>
+        )}
+        <PanelToggleBtn isExpanded={isExpanded} onExpand={() => setIsExpanded(true)} onCollapse={handleCollapse} />
+        <PanelCreateBtn showForm={showForm} onToggle={handleToggleForm} />
+      </div>
+
+      {/* Content — only when expanded */}
+      {isExpanded && (
+        <div
+          className="panel-content"
+          style={{
+            background: 'rgba(2,15,35,0.88)',
+            backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+            border: '1px solid rgba(0,212,255,0.25)',
+            borderTop: '1px solid rgba(0,212,255,0.08)',
+            borderRadius: '0 0 10px 10px',
+            overflow: 'hidden',
+            display: 'flex', flexDirection: 'column',
+            animation: 'panelExpand 0.25s ease-out',
+          }}
+        >
+          {/* Add form */}
+          {showForm && (
+            <div style={{
+              padding: '10px 12px',
+              borderBottom: '1px solid rgba(0,212,255,0.1)',
+              background: 'rgba(0,212,255,0.03)',
+              flexShrink: 0,
+              animation: 'slideDown 0.2s ease-out',
+            }}>
+              <div style={{
+                fontSize: '9px', color: 'rgba(0,212,255,0.4)',
+                fontFamily: "'Rajdhani', sans-serif",
+                letterSpacing: '0.15em', textTransform: 'uppercase', marginBottom: '7px',
+              }}>
+                ADD NEW TASK
+              </div>
+              <TodoForm onAdd={onAdd} />
+            </div>
+          )}
+
+          {/* Task list */}
+          <div
+            className="task-list panel-scroll"
+            style={{
+              overflowY: 'auto', overflowX: 'hidden',
+              maxHeight: showForm ? '160px' : '240px',
+              padding: '4px 8px',
+              scrollbarWidth: 'thin',
+              scrollbarColor: 'rgba(0,212,255,0.2) transparent',
+            }}
+          >
+            {pending.length > 0 && (
+              <>
+                <SectionLabel>Pending · {pending.length}</SectionLabel>
+                <TodoList todos={pending} onToggle={handleToggle} onDelete={handleDelete} />
+              </>
+            )}
+            {completed.length > 0 && (
+              <>
+                <SectionLabel>Done · {completed.length}</SectionLabel>
+                <TodoList todos={completed} onToggle={handleToggle} onDelete={handleDelete} />
+              </>
+            )}
+            {pending.length === 0 && completed.length === 0 && (
+              <div style={{
+                padding: '20px', textAlign: 'center', fontSize: '11px',
+                color: 'rgba(0,212,255,0.25)', fontFamily: "'Rajdhani', sans-serif",
+                letterSpacing: '0.05em',
+              }}>
+                No calendar tasks<br />Click + to add one
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Floating Todo List Panel ───────────────────────────────────────────────────
+
+function TodoPanel({
+  panelZIndex, onBringToFront,
+  setQuickTodoCount, quickTodoCount,
+}) {
+  const { isDragging, onMouseDown, dragStyle } = useDraggable({
+    x: 20, y: 72 + 300,
+    storageKey: 'taski_pos_todo',
+  });
+
+  const [isExpanded, setIsExpanded] = useState(() => {
+    return localStorage.getItem('taski_todo_expanded') === 'true';
+  });
+  const [showForm, setShowForm] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('taski_todo_expanded', String(isExpanded));
+  }, [isExpanded]);
+
+  useEffect(() => {
+    function onExpandEvt(e) {
+      if (e.detail?.panel === 'todo') setIsExpanded(true);
+    }
+    window.addEventListener('taski-expand-panel', onExpandEvt);
+    window.addEventListener('taski-panel-expand', onExpandEvt);
+    return () => {
+      window.removeEventListener('taski-expand-panel', onExpandEvt);
+      window.removeEventListener('taski-panel-expand', onExpandEvt);
+    };
+  }, []);
+
+  function handleCollapse() { setIsExpanded(false); setShowForm(false); }
+  function handleToggleForm() {
+    if (!isExpanded) setIsExpanded(true);
+    setShowForm((p) => !p);
+  }
+
+  return (
+    <div
+      onClick={onBringToFront}
+      style={{
+        ...dragStyle,
+        zIndex: isDragging ? 1000 : panelZIndex,
+        width: '300px',
+        maxHeight: isExpanded ? 'calc(55vh - 80px)' : '44px',
+        overflow: 'hidden',
+        transition: 'max-height 0.3s cubic-bezier(0.16,1,0.3,1)',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      {/* Header — always visible */}
+      <div
+        onMouseDown={onMouseDown}
+        style={{
+          height: '44px', minHeight: '44px', flexShrink: 0,
+          display: 'flex', alignItems: 'center', padding: '0 10px', gap: '6px',
+          background: 'rgba(2,15,35,0.92)',
+          backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+          border: '1px solid rgba(0,212,255,0.25)',
+          borderRadius: isExpanded ? '10px 10px 0 0' : '10px',
+          cursor: isDragging ? 'grabbing' : 'grab',
+          userSelect: 'none',
+          transition: 'border-radius 0.2s',
+        }}
+      >
+        <span style={{ color: 'rgba(0,212,255,0.2)', fontSize: '14px', flexShrink: 0 }}>⠿</span>
+        <span style={{
+          fontSize: '10px', fontFamily: "'Rajdhani', sans-serif", fontWeight: 600,
+          color: '#00d4ff', letterSpacing: '0.12em', textTransform: 'uppercase',
+          flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          ✓ TO DO LIST
+        </span>
+        {quickTodoCount > 0 && (
+          <span style={{
+            background: 'rgba(0,212,255,0.12)', border: '1px solid rgba(0,212,255,0.3)',
+            borderRadius: '10px', padding: '1px 6px', fontSize: '10px',
+            fontFamily: "'Rajdhani', sans-serif", fontWeight: 600, color: '#00d4ff', flexShrink: 0,
+          }}>
+            {quickTodoCount}
+          </span>
+        )}
+        <PanelToggleBtn isExpanded={isExpanded} onExpand={() => setIsExpanded(true)} onCollapse={handleCollapse} />
+        <PanelCreateBtn showForm={showForm} onToggle={handleToggleForm} />
+      </div>
+
+      {/* Content — only when expanded */}
+      {isExpanded && (
+        <div
+          className="panel-content"
+          style={{
+            background: 'rgba(2,15,35,0.88)',
+            backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+            border: '1px solid rgba(0,212,255,0.25)',
+            borderTop: '1px solid rgba(0,212,255,0.08)',
+            borderRadius: '0 0 10px 10px',
+            overflow: 'hidden',
+            maxHeight: 'calc(55vh - 124px)',
+            display: 'flex', flexDirection: 'column',
+            animation: 'panelExpand 0.25s ease-out',
+          }}
+        >
+          <QuickTodoList onCountChange={setQuickTodoCount} showForm={showForm} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Floating Chat Panel ────────────────────────────────────────────────────────
+
+function ChatPanel({
+  panelZIndex, onBringToFront,
+  visualizerState, setVisualizerState,
+  registerMicToggle, registerMicSupport,
+  isMuted, setIsMuted, isMicSupported,
+  setWebsitePreviewData, registerChatInsert,
+}) {
+  const { isDragging, onMouseDown, dragStyle } = useDraggable({
+    x: typeof window !== 'undefined' ? window.innerWidth - 360 : 600,
+    y: 72,
+    storageKey: 'taski_pos_chat',
+  });
+
+  const [isExpanded, setIsExpanded] = useState(() => {
+    const saved = localStorage.getItem('taski_chat_expanded');
+    return saved === null ? true : saved === 'true';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('taski_chat_expanded', isExpanded.toString());
+  }, [isExpanded]);
+
+  useEffect(() => {
+    function handleExpand(e) {
+      if (e.detail?.panel === 'chat') setIsExpanded(true);
+    }
+    window.addEventListener('taski-expand-panel', handleExpand);
+    return () => window.removeEventListener('taski-expand-panel', handleExpand);
+  }, []);
+
+  const dotColor = visualizerState === 'processing' ? '#ffaa00'
+    : visualizerState === 'idle' ? '#00d4ff'
+    : '#00ff88';
+
+  return (
+    <div
+      onClick={onBringToFront}
+      style={{
+        ...dragStyle,
+        zIndex: isDragging ? 1000 : panelZIndex,
+        width: '340px',
+        height: isExpanded ? 'calc(100vh - 144px)' : 'auto',
+        maxHeight: isExpanded ? 'calc(100vh - 144px)' : 'none',
+        transition: 'max-height 0.3s cubic-bezier(0.16,1,0.3,1)',
+        display: 'flex',
+        flexDirection: 'column',
+        borderRadius: '10px',
+      }}
+    >
+      {/* Drag header — always visible */}
+      <div
+        onMouseDown={onMouseDown}
+        style={{
+          height: '44px',
+          minHeight: '44px',
+          cursor: isDragging ? 'grabbing' : 'grab',
+          background: 'rgba(2,15,35,0.92)',
+          backdropFilter: 'blur(20px)',
+          WebkitBackdropFilter: 'blur(20px)',
+          border: '1px solid rgba(0,212,255,0.25)',
+          borderRadius: '10px 10px 0 0',
+          display: 'flex',
+          alignItems: 'center',
+          padding: '0 12px',
+          gap: '8px',
+          flexShrink: 0,
+          userSelect: 'none',
+        }}
+      >
+        <span style={{ color: 'rgba(0,212,255,0.25)', fontSize: '14px', cursor: isDragging ? 'grabbing' : 'grab', flexShrink: 0 }}>⠿</span>
+        <span style={{
+          fontSize: '12px', fontFamily: "'Orbitron', sans-serif",
+          color: '#00d4ff', letterSpacing: '0.08em', flex: 1,
+        }}>
+          TASKI
+        </span>
+        <span style={{
+          width: '6px', height: '6px', borderRadius: '50%',
+          background: dotColor, boxShadow: `0 0 6px ${dotColor}`,
+          display: 'inline-block', flexShrink: 0,
+        }} />
+        <ExpandBtn isExpanded={isExpanded} onToggle={() => setIsExpanded((p) => !p)} />
+      </div>
+
+      {/* ChatBot content */}
+      <div
+        className="panel-content"
+        style={{
+          background: 'rgba(2,15,35,0.88)',
+          backdropFilter: 'blur(20px)',
+          WebkitBackdropFilter: 'blur(20px)',
+          border: '1px solid rgba(0,212,255,0.25)',
+          borderTop: '1px solid rgba(0,212,255,0.08)',
+          borderRadius: '0 0 10px 10px',
+          overflow: 'hidden',
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0,
+        }}
+      >
+        <ChatBot
+          onVisualizerState={setVisualizerState}
+          registerMicToggle={registerMicToggle}
+          registerMicSupport={registerMicSupport}
+          isMuted={isMuted}
+          onWebsiteGenerated={setWebsitePreviewData}
+          registerChatInsert={registerChatInsert}
+          isCollapsed={!isExpanded}
+          onExpand={() => setIsExpanded(true)}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ── Small helper components ────────────────────────────────────────────────────
 
-function ToggleAddBtn({ open, onClick }) {
+function ExpandBtn({ isExpanded, onToggle }) {
+  const [hovered, setHovered] = useState(false);
   return (
     <button
-      onClick={onClick}
-      aria-label={open ? 'Close add form' : 'Add new task'}
+      onClick={(e) => { e.stopPropagation(); onToggle(); }}
+      title={isExpanded ? 'Collapse' : 'Expand'}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
-        width:          '22px',
-        height:         '22px',
-        borderRadius:   '50%',
-        border:         '1px solid rgba(0,212,255,0.5)',
-        background:     open ? 'rgba(0,212,255,0.15)' : 'transparent',
-        color:          '#00d4ff',
-        fontSize:       '14px',
-        lineHeight:     1,
-        cursor:         'pointer',
-        display:        'flex',
-        alignItems:     'center',
+        background:   hovered ? 'rgba(0,212,255,0.15)' : (isExpanded ? 'rgba(0,212,255,0.1)' : 'transparent'),
+        border:       `1px solid ${hovered ? '#00d4ff' : 'rgba(0,212,255,0.3)'}`,
+        borderRadius: '50%',
+        width:        '22px',
+        height:       '22px',
+        cursor:       'pointer',
+        color:        '#00d4ff',
+        fontSize:     '16px',
+        fontWeight:   300,
+        display:      'flex',
+        alignItems:   'center',
         justifyContent: 'center',
-        transition:     'all 150ms ease',
-        flexShrink:     0,
-        fontFamily:     'monospace',
+        flexShrink:   0,
+        transition:   'all 0.2s',
+        lineHeight:   1,
+        padding:      0,
+        paddingBottom: '1px',
+        boxShadow:    hovered ? '0 0 8px rgba(0,212,255,0.3)' : 'none',
       }}
-      onMouseEnter={(e) => { e.currentTarget.style.background='rgba(0,212,255,0.2)'; e.currentTarget.style.boxShadow='0 0 8px rgba(0,212,255,0.4)'; }}
-      onMouseLeave={(e) => { e.currentTarget.style.background=open ? 'rgba(0,212,255,0.15)' : 'transparent'; e.currentTarget.style.boxShadow='none'; }}
     >
-      {open ? '×' : '+'}
+      {isExpanded ? '−' : '+'}
+    </button>
+  );
+}
+
+// Expand ▼/▲ toggle for CalendarPanel and TodoPanel headers
+function PanelToggleBtn({ isExpanded, onExpand, onCollapse }) {
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); isExpanded ? onCollapse() : onExpand(); }}
+      title={isExpanded ? 'Collapse' : 'Expand'}
+      style={{
+        width: '24px', height: '24px', borderRadius: '6px',
+        border: '1px solid rgba(0,212,255,0.25)',
+        background: isExpanded ? 'rgba(0,212,255,0.1)' : 'transparent',
+        color: isExpanded ? '#00d4ff' : 'rgba(0,212,255,0.5)',
+        cursor: 'pointer', display: 'flex', alignItems: 'center',
+        justifyContent: 'center', flexShrink: 0, fontSize: '11px',
+        fontWeight: 400, transition: 'all 0.15s', padding: 0, lineHeight: 1,
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = 'rgba(0,212,255,0.6)';
+        e.currentTarget.style.color = '#00d4ff';
+        e.currentTarget.style.background = 'rgba(0,212,255,0.12)';
+        e.currentTarget.style.boxShadow = '0 0 8px rgba(0,212,255,0.2)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = 'rgba(0,212,255,0.25)';
+        e.currentTarget.style.color = isExpanded ? '#00d4ff' : 'rgba(0,212,255,0.5)';
+        e.currentTarget.style.background = isExpanded ? 'rgba(0,212,255,0.1)' : 'transparent';
+        e.currentTarget.style.boxShadow = 'none';
+      }}
+    >
+      {isExpanded ? '▲' : '▼'}
+    </button>
+  );
+}
+
+// Create [+/×] button for CalendarPanel and TodoPanel headers
+function PanelCreateBtn({ showForm, onToggle }) {
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onToggle(); }}
+      title={showForm ? 'Close form' : 'Add new'}
+      style={{
+        width: '24px', height: '24px', borderRadius: '6px',
+        border: showForm ? '1px solid rgba(255,68,68,0.4)' : '1px solid rgba(0,212,255,0.25)',
+        background: showForm ? 'rgba(255,68,68,0.1)' : 'rgba(0,212,255,0.08)',
+        color: showForm ? '#ff6666' : '#00d4ff',
+        cursor: 'pointer', display: 'flex', alignItems: 'center',
+        justifyContent: 'center', flexShrink: 0, fontSize: '16px',
+        fontWeight: 300, transition: 'all 0.15s', padding: 0,
+        lineHeight: 1, paddingBottom: '1px',
+      }}
+      onMouseEnter={(e) => {
+        if (!showForm) {
+          e.currentTarget.style.borderColor = 'rgba(0,212,255,0.7)';
+          e.currentTarget.style.background = 'rgba(0,212,255,0.15)';
+          e.currentTarget.style.boxShadow = '0 0 10px rgba(0,212,255,0.25)';
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (!showForm) {
+          e.currentTarget.style.borderColor = 'rgba(0,212,255,0.25)';
+          e.currentTarget.style.background = 'rgba(0,212,255,0.08)';
+          e.currentTarget.style.boxShadow = 'none';
+        }
+      }}
+    >
+      {showForm ? '×' : '+'}
     </button>
   );
 }
@@ -537,11 +907,11 @@ function SectionLabel({ children }) {
 function EmptyState({ text }) {
   return (
     <div style={{
-      display:        'flex',
-      flexDirection:  'column',
-      alignItems:     'center',
-      padding:        '20px 0',
-      gap:            '8px',
+      display:       'flex',
+      flexDirection: 'column',
+      alignItems:    'center',
+      padding:       '16px 0',
+      gap:           '8px',
     }}>
       <svg width="30" height="30" viewBox="0 0 44 44" fill="none" aria-hidden="true">
         <rect x="1" y="1" width="42" height="42" rx="3" stroke="rgba(0,212,255,0.12)" strokeWidth="1"/>

@@ -444,8 +444,34 @@ function TodoGroup({ title, count, todos, onComplete, onDelete }) {
   );
 }
 
+const PRIORITY_PILL = {
+  high:   { bg: 'rgba(255,68,68,0.12)',  border: 'rgba(255,68,68,0.4)',  color: '#ff6666', label: 'HIGH' },
+  medium: { bg: 'rgba(255,170,0,0.12)', border: 'rgba(255,170,0,0.4)',  color: '#ffaa00', label: 'MED'  },
+  low:    { bg: 'rgba(0,255,136,0.1)',  border: 'rgba(0,255,136,0.35)', color: '#00ff88', label: 'LOW'  },
+};
+
+function MetaPill({ children, bg, border, color }) {
+  return (
+    <span style={{
+      fontFamily:    "'Rajdhani', sans-serif",
+      fontSize:      '10px',
+      letterSpacing: '0.06em',
+      borderRadius:  '4px',
+      padding:       '1px 5px',
+      background:    bg,
+      border:        `1px solid ${border}`,
+      color,
+      whiteSpace:    'nowrap',
+      flexShrink:    0,
+    }}>
+      {children}
+    </span>
+  );
+}
+
 function TodoItem({ todo, onComplete, onDelete }) {
   const [hovered, setHovered] = useState(false);
+  const pri = PRIORITY_PILL[todo.priority] || PRIORITY_PILL.medium;
 
   return (
     <div
@@ -453,7 +479,7 @@ function TodoItem({ todo, onComplete, onDelete }) {
       onMouseLeave={() => setHovered(false)}
       style={{
         display:      'flex',
-        alignItems:   'center',
+        alignItems:   'flex-start',
         gap:          '8px',
         padding:      '7px 10px',
         background:   hovered ? 'var(--color-bg-overlay)' : 'var(--color-bg-raised)',
@@ -470,6 +496,8 @@ function TodoItem({ todo, onComplete, onDelete }) {
         style={{
           width:        '16px',
           height:       '16px',
+          minWidth:     '16px',
+          marginTop:    '2px',
           borderRadius: '50%',
           border:       `1px solid ${todo.done ? 'var(--color-success)' : 'var(--color-border)'}`,
           background:   todo.done ? 'var(--color-success)' : 'transparent',
@@ -485,12 +513,13 @@ function TodoItem({ todo, onComplete, onDelete }) {
         {todo.done && <Check size={9} color="#000" strokeWidth={3} />}
       </button>
 
-      {/* Title + meta */}
+      {/* Title + meta pills */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
           fontFamily:     "'Rajdhani', sans-serif",
           fontSize:       '13px',
-          color:          todo.done ? 'var(--color-text-dim)' : 'var(--color-text-primary)',
+          fontWeight:     todo.done ? 400 : 500,
+          color:          todo.done ? 'var(--color-text-dim)' : '#e0f4ff',
           textDecoration: todo.done ? 'line-through' : 'none',
           overflow:       'hidden',
           textOverflow:   'ellipsis',
@@ -498,28 +527,32 @@ function TodoItem({ todo, onComplete, onDelete }) {
         }}>
           {todo.title}
         </div>
-        <div style={{
-          fontFamily:    "'Rajdhani', sans-serif",
-          fontSize:      '10px',
-          letterSpacing: '0.08em',
-          textTransform: 'uppercase',
-          color:         'var(--color-text-dim)',
-          marginTop:     '1px',
-        }}>
-          {formatDueLabel(todo.dueDate)}
-          {todo.dueTime && ` · ${todo.dueTime}${todo.endTime ? `-${todo.endTime}` : ''}`}
-          {` · ${todo.priority === 'medium' ? 'MED' : todo.priority.toUpperCase()}`}
+
+        {/* Metadata pills row */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '3px', flexWrap: 'wrap' }}>
+          <MetaPill
+            bg="rgba(0,212,255,0.1)"
+            border="rgba(0,212,255,0.3)"
+            color="#00d4ff"
+          >
+            {formatDueLabel(todo.dueDate)}
+          </MetaPill>
+
+          {todo.dueTime && (
+            <MetaPill
+              bg="rgba(0,212,255,0.08)"
+              border="rgba(0,212,255,0.25)"
+              color="#7dd4f0"
+            >
+              {todo.dueTime}{todo.endTime ? `-${todo.endTime}` : ''}
+            </MetaPill>
+          )}
+
+          <MetaPill bg={pri.bg} border={pri.border} color={pri.color}>
+            {pri.label}
+          </MetaPill>
         </div>
       </div>
-
-      {/* Priority dot */}
-      <span style={{
-        width:        '7px',
-        height:       '7px',
-        borderRadius: '50%',
-        background:   PRIORITY_COLORS[todo.priority] || PRIORITY_COLORS.medium,
-        flexShrink:   0,
-      }} />
 
       {/* Delete */}
       <button
@@ -529,14 +562,16 @@ function TodoItem({ todo, onComplete, onDelete }) {
           background:  'none',
           border:      'none',
           cursor:      'pointer',
-          color:       hovered ? 'var(--color-danger)' : 'transparent',
+          color:       hovered ? 'rgba(255,68,68,0.8)' : 'transparent',
           padding:     '2px',
+          marginTop:   '1px',
           display:     'flex',
           alignItems:  'center',
           flexShrink:  0,
-          transition:  'all 150ms ease',
-          boxShadow:   hovered ? '0 0 6px rgba(255,45,85,0.4)' : 'none',
+          transition:  'color 150ms ease',
         }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = '#ff4444'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = hovered ? 'rgba(255,68,68,0.8)' : 'transparent'; }}
       >
         <X size={12} />
       </button>

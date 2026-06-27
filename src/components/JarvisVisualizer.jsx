@@ -160,6 +160,7 @@ export default function JarvisVisualizer({
   isMuted,
   onMuteToggle,
   isSupported  = true,
+  size,        // optional pixel number; falls back to CSS vmin
 }) {
   const animFrameRef = useRef(null);
   const tRef         = useRef(0);
@@ -227,8 +228,8 @@ export default function JarvisVisualizer({
 
   const stateLabel = { idle: '', listening: 'LISTENING...', processing: 'PROCESSING...', speaking: 'SPEAKING...' }[state] ?? '';
 
-  // SVG size: large, responsive
-  const svgSize = 'min(62vmin, 500px)';
+  // SVG size: dynamic from prop or CSS vmin fallback
+  const svgSize = size ? `${size}px` : 'min(62vmin, 500px)';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', userSelect: 'none' }}>
@@ -241,7 +242,7 @@ export default function JarvisVisualizer({
           height={svgSize}
           aria-label={`TASKI visualizer — ${state}`}
           role="img"
-          style={{ overflow: 'visible', display: 'block' }}
+          style={{ overflow: 'visible', display: 'block', transition: 'width 0.4s ease, height 0.4s ease' }}
         >
           {/* ── Background radial glow disc ── */}
           <defs>
