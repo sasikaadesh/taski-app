@@ -53,7 +53,7 @@ function StatusDot({ label, active, onClick, title, status }) {
 
 // ── Quick action button ───────────────────────────────────────────────────────
 
-function ActionBtn({ icon, label, onClick }) {
+function ActionBtn({ icon, label, onClick, badge }) {
   const [hov, setHov] = useState(false);
   return (
     <button
@@ -82,6 +82,18 @@ function ActionBtn({ icon, label, onClick }) {
     >
       <span style={{ fontSize: '12px', lineHeight: 1 }}>{icon}</span>
       <span>{label}</span>
+      {badge > 0 && (
+        <span style={{
+          background:   'rgba(0,212,255,0.15)',
+          border:       '1px solid rgba(0,212,255,0.3)',
+          borderRadius: '8px',
+          padding:      '0 4px',
+          fontSize:     '9px',
+          color:        '#00d4ff',
+        }}>
+          {badge}
+        </span>
+      )}
     </button>
   );
 }
@@ -135,14 +147,23 @@ export default function HudFooter({
   onImagen,
   onWebsite,
   onSkills,
+  savedSitesCount = 0,
   visualizerState,
   calConnected = false,
   gmailConnected = false,
+  tgActive      = false,
+  tgStatus      = 'inactive',
+  tgLastMessage = null,
+  tgMessageCount = 0,
+  tgHasToken    = false,
+  onTgStart,
+  onTgStop,
 }) {
   const aiReady = visualizerState !== 'processing';
 
-  const [googleStatus, setGoogleStatus] = useState('checking');
-  const [connecting,   setConnecting]   = useState(false);
+  const [googleStatus,         setGoogleStatus]         = useState('checking');
+  const [connecting,           setConnecting]           = useState(false);
+  const [showTelegramSettings, setShowTelegramSettings] = useState(false);
 
   useEffect(() => {
     const checkAuth = () => {
@@ -188,7 +209,7 @@ export default function HudFooter({
       }}
     >
       {/* ── Status indicators ── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexShrink: 0, position: 'relative' }}>
         <StatusDot
           label="CAL"
           status={googleStatus === 'checking' ? 'disconnected' : googleStatus}
@@ -202,6 +223,105 @@ export default function HudFooter({
           title={googleStatus === 'disconnected' ? 'Click to connect Google' : undefined}
         />
         <StatusDot label="AI" active={aiReady} />
+
+        {/* ── Telegram indicator ── */}
+        {tgHasToken && (
+          <button
+            onClick={() => setShowTelegramSettings((p) => !p)}
+            title="Telegram bot status"
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}
+          >
+            <div style={{
+              width:        '6px',
+              height:       '6px',
+              borderRadius: '50%',
+              background:   tgActive ? '#00ff88' : 'rgba(255,255,255,0.2)',
+              boxShadow:    tgActive ? '0 0 6px #00ff88' : 'none',
+              animation:    (tgStatus === 'processing' || tgStatus === 'transcribing') ? 'statusPulse 0.8s ease-in-out infinite' : 'none',
+              flexShrink:   0,
+            }} />
+            <span style={{
+              fontFamily:    "'Rajdhani', sans-serif",
+              fontSize:      '9px',
+              fontWeight:    600,
+              letterSpacing: '0.14em',
+              textTransform: 'uppercase',
+              color:         tgActive ? 'rgba(0,255,136,0.7)' : 'rgba(255,255,255,0.3)',
+            }}>
+              TG
+            </span>
+            {tgMessageCount > 0 && (
+              <span style={{
+                background:   'rgba(0,212,255,0.15)',
+                border:       '1px solid rgba(0,212,255,0.3)',
+                borderRadius: '8px',
+                padding:      '0 4px',
+                fontSize:     '9px',
+                fontFamily:   "'Rajdhani', sans-serif",
+                color:        '#00d4ff',
+              }}>
+                {tgMessageCount}
+              </span>
+            )}
+          </button>
+        )}
+
+        {/* ── Telegram settings popup ── */}
+        {tgHasToken && showTelegramSettings && (
+          <div style={{
+            position:        'absolute',
+            bottom:          '52px',
+            left:            0,
+            background:      'rgba(2,15,35,0.96)',
+            border:          '1px solid rgba(0,212,255,0.25)',
+            borderRadius:    '8px',
+            padding:         '12px',
+            zIndex:          200,
+            minWidth:        '220px',
+            backdropFilter:  'blur(20px)',
+            WebkitBackdropFilter: 'blur(20px)',
+          }}>
+            <div style={{ fontSize: '10px', color: '#00d4ff', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em', marginBottom: '8px' }}>
+              📱 TELEGRAM BOT
+            </div>
+            <div style={{ fontSize: '11px', color: tgActive ? '#00ff88' : 'rgba(255,255,255,0.4)', fontFamily: "'Rajdhani', sans-serif", marginBottom: '6px' }}>
+              {tgActive ? '● Active — listening for messages' : '○ Inactive'}
+            </div>
+            {tgStatus === 'transcribing' && (
+              <div style={{ fontSize: '10px', color: '#ffaa00', fontFamily: "'Rajdhani', sans-serif" }}>
+                ⟳ Transcribing voice...
+              </div>
+            )}
+            {tgStatus === 'processing' && (
+              <div style={{ fontSize: '10px', color: '#00d4ff', fontFamily: "'Rajdhani', sans-serif" }}>
+                ⟳ Processing with Claude...
+              </div>
+            )}
+            {tgLastMessage && (
+              <div style={{ fontSize: '10px', color: 'rgba(0,212,255,0.5)', fontFamily: "'Rajdhani', sans-serif", marginTop: '4px' }}>
+                Last: {tgLastMessage.type} from {tgLastMessage.from} at {tgLastMessage.time}
+              </div>
+            )}
+            <button
+              onClick={() => { tgActive ? onTgStop?.() : onTgStart?.(); }}
+              style={{
+                marginTop:     '8px',
+                width:         '100%',
+                padding:       '5px',
+                borderRadius:  '4px',
+                border:        '1px solid rgba(0,212,255,0.3)',
+                background:    'transparent',
+                color:         '#00d4ff',
+                fontFamily:    "'Rajdhani', sans-serif",
+                fontSize:      '10px',
+                letterSpacing: '0.1em',
+                cursor:        'pointer',
+              }}
+            >
+              {tgActive ? '⏹ STOP BOT' : '▶ START BOT'}
+            </button>
+          </div>
+        )}
       </div>
 
       <Divider />
@@ -210,7 +330,7 @@ export default function HudFooter({
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
         <ActionBtn icon="📁" label="FILES"   onClick={onFiles} />
         <ActionBtn icon="🖼" label="IMAGEN"  onClick={onImagen} />
-        <ActionBtn icon="✨" label="WEBSITE" onClick={onWebsite} />
+        <ActionBtn icon="✨" label="WEBSITE" onClick={onWebsite} badge={savedSitesCount} />
         <ActionBtn icon="⚡" label="SKILLS"  onClick={onSkills} />
       </div>
 

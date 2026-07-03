@@ -11,8 +11,6 @@ import { getAllSkills, getSkill } from '../lib/skillLoader';
 import { generateWithImagen, enhanceImagePrompt, detectAspectRatio, IMAGEN_MODELS } from '../lib/imagenGenerator';
 import ImagenResultCard from './ImagenResultCard';
 import { analyzeAndPlanOrganization, groupByFolder } from '../lib/folderOrganizer';
-import WebsiteGeneratorPanel from './WebsiteGeneratorPanel';
-import { analyzePrompt } from '../lib/promptAnalyzer';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import {
   getCalendarEventsForRange,
@@ -20,12 +18,16 @@ import {
   clearToken,
   getGoogleAccessToken,
   createCalendarEvent,
+  getTodayEvents,
+  getTomorrowEvents,
+  getThisWeekEvents,
 } from '../lib/googleCalendar';
 import { isAuthenticated } from '../lib/googleAuth';
 import { searchEmails, formatEmailsForPrompt, sendEmail, buildQuery } from '../lib/gmail';
 import EmailConfirmationCard from './EmailConfirmationCard';
 import useChatHistory from '../hooks/useChatHistory';
 import ChatHistoryPanel from './ChatHistoryPanel';
+import { speakText as ttsSpeak, stopSpeaking as ttsStop, isTTSEnabled, setTTSEnabled } from '../lib/ttsManager';
 
 const MAX_MESSAGES = 10;
 
@@ -442,24 +444,6 @@ async function draftEmailWithClaude(userIntent, recipientEmail, calendarContext 
   return { subject: parsed.subject, body: parsed.body };
 }
 
-// ── TTS helper ────────────────────────────────────────────────────────────────
-
-/**
- * Attempt to find the best English male voice.
- * Must be called after voices are loaded (fine after user interaction).
- */
-function getBestVoice() {
-  if (!window.speechSynthesis) return null;
-  const voices = window.speechSynthesis.getVoices();
-  return (
-    voices.find((v) => v.name === 'Google UK English Male') ||
-    voices.find((v) => v.lang === 'en-GB' && v.name.toLowerCase().includes('male')) ||
-    voices.find((v) => v.lang.startsWith('en') && v.name.toLowerCase().includes('male')) ||
-    voices.find((v) => v.lang.startsWith('en')) ||
-    null
-  );
-}
-
 // ── Website command detection ─────────────────────────────────────────────────
 
 const WEBSITE_NL_PATTERNS = [
@@ -575,6 +559,8 @@ const BRIEFING_PHRASES = [
   'morning summary', "today's overview", 'run briefing', 'morning report',
 ];
 
+const BRIEFING_SYSTEM = 'You are TASKI, a friendly AI assistant giving a morning briefing. Be warm, concise, and helpful.';
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 /**
@@ -606,6 +592,7 @@ export default function ChatBot({
   registerChatInsert,
   isCollapsed = false,
   onExpand,
+  openWebsiteGenerator,
 }) {
   const [messages,           setMessages]           = useState([]);
   const [input,              setInput]              = useState('');
@@ -620,6 +607,7 @@ export default function ChatBot({
   const [isDragging,          setIsDragging]          = useState(false);
   const [webSearchMode,       setWebSearchMode]       = useState(false);
   const [isSearching,         setIsSearching]         = useState(false);
+  const [audioPausedBySystem, setAudioPausedBySystem] = useState(false);
 
   // ── Chat history ──────────────────────────────────────────────────────────
   const chatHistory    = useChatHistory();
@@ -642,6 +630,26 @@ export default function ChatBot({
   const triggerBriefingRef = useRef(null);
   const isMutedRef = useRef(isMuted); // keep ref in sync for use inside callbacks
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
+
+  // Listen for audio pause/resume events from other panels (e.g. website generator)
+  useEffect(() => {
+    function handleAudioPause(e) {
+      console.log('[TTS] Pausing due to:', e.detail.reason);
+      ttsStop();
+      setIsSpeaking(false);
+      setAudioPausedBySystem(true);
+    }
+    function handleAudioResume(e) {
+      console.log('[TTS] Resume signal from:', e.detail.reason);
+      setAudioPausedBySystem(false);
+    }
+    window.addEventListener('taski-audio-pause',  handleAudioPause);
+    window.addEventListener('taski-audio-resume', handleAudioResume);
+    return () => {
+      window.removeEventListener('taski-audio-pause',  handleAudioPause);
+      window.removeEventListener('taski-audio-resume', handleAudioResume);
+    };
+  }, []);
 
   // ── External chat insert (for footer buttons) ──────────────────────────────
   const insertTextFnRef = useRef(null);
@@ -777,6 +785,19 @@ export default function ChatBot({
     return () => window.removeEventListener('taski-briefing', handleBriefingEvent);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Show a subtle notification when a Telegram message is processed
+  useEffect(() => {
+    function handleTelegramMessage(e) {
+      const { from, type } = e.detail;
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: `📱 Telegram ${type} from **${from}** — replied via bot.` },
+      ].slice(-50));
+    }
+    window.addEventListener('taski-telegram-message', handleTelegramMessage);
+    return () => window.removeEventListener('taski-telegram-message', handleTelegramMessage);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Auto-save after each assistant response (when loading transitions true→false)
   useEffect(() => {
     if (prevLoadingRef.current && !loading && messages.length > 0) {
@@ -791,41 +812,47 @@ export default function ChatBot({
   // ── TTS ───────────────────────────────────────────────────────────────────
 
   /**
-   * Speak `text` via Web Speech API.
+   * Speak `text` via the shared ttsManager (the single source of truth for TTS state).
    * Sets visualizer to 'speaking' on start, 'idle' on end.
-   * No-op if isMuted is true.
+   * No-op if isMuted is true or audio is paused by another panel.
    */
   const speakText = useCallback((text) => {
-    if (isMutedRef.current || !window.speechSynthesis) {
+    console.log('[ChatBot speakText] called:', {
+      isMuted: isMutedRef.current,
+      audioPausedBySystem,
+      ttsEnabled: localStorage.getItem('taski_tts_enabled'),
+      textLength: text?.length,
+    });
+    if (isMutedRef.current) {
+      console.log('[ChatBot speakText] BLOCKED: muted');
       onVisualizerState?.('idle');
       return;
     }
-    window.speechSynthesis.cancel(); // stop any in-progress speech
+    if (audioPausedBySystem) {
+      console.log('[ChatBot speakText] BLOCKED: paused by system');
+      return;
+    }
+    ttsSpeak(text);
+  }, [onVisualizerState, audioPausedBySystem]);
 
-    const utterance     = new SpeechSynthesisUtterance(text);
-    utterance.rate      = 0.9;
-    utterance.pitch     = 0.85;
-    utterance.volume    = 1.0;
-    utterance.voice     = getBestVoice();
-
-    utterance.onstart = () => { onVisualizerState?.('speaking'); setIsSpeaking(true); };
-    utterance.onend   = () => { onVisualizerState?.('idle');     setIsSpeaking(false); };
-    utterance.onerror = () => { onVisualizerState?.('idle');     setIsSpeaking(false); };
-
-    window.speechSynthesis.speak(utterance);
+  // Reflect ttsManager's actual speaking state onto the visualizer + isSpeaking flag
+  useEffect(() => {
+    function onSpeakingChange(e) {
+      if (e.detail.speaking) { onVisualizerState?.('speaking'); setIsSpeaking(true); }
+      else                   { onVisualizerState?.('idle');     setIsSpeaking(false); }
+    }
+    window.addEventListener('taski-tts-speaking', onSpeakingChange);
+    return () => window.removeEventListener('taski-tts-speaking', onSpeakingChange);
   }, [onVisualizerState]);
 
   // ── Skill helpers ─────────────────────────────────────────────────────────
 
   function activateSkill(skill) {
-    // /website is a panel feature, not a text-skill — open the generator
+    // /website opens the full-screen generator instead of adding an inline panel
     if (skill.trigger === '/website') {
       setShowSkillMenu(false);
       setInput('');
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: '[website-generator]', meta: { type: 'website-generator', prefillPrompt: '' } },
-      ].slice(-MAX_MESSAGES));
+      openWebsiteGenerator?.('');
       return;
     }
     setActiveSkill(skill);
@@ -848,8 +875,14 @@ export default function ChatBot({
     speakText(msg);
   }
 
+  function toggleMute() {
+    const newEnabled = !isTTSEnabled();
+    setTTSEnabled(newEnabled);
+    if (!newEnabled) ttsStop();
+  }
+
   function startNewChat() {
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    ttsStop();
     setMessages([]);
     setInput('');
     setError('');
@@ -1049,7 +1082,7 @@ export default function ChatBot({
     if (loading) return;
     setLoading(true);
     onVisualizerState?.('processing');
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    ttsStop();
 
     const timezone2 = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const now2      = new Date();
@@ -1108,12 +1141,40 @@ export default function ChatBot({
           speakText(reply);
           return;
         }
-        const { start, end } = detectDateRange(originalQuery);
-        const events         = await getCalendarEventsForRange(start, end);
-        const calBlk         = buildCalendarContext(events, start, end);
-        system2 +=
-          `\n\nHere are the user's actual Google Calendar events:\n${calBlk}\n\n` +
-          `Use this real calendar data to answer their scheduling question accurately. Be concise and conversational.`;
+        const tl2 = originalQuery.toLowerCase();
+        let events2      = [];
+        let periodLabel2 = 'today';
+        if (tl2.includes('tomorrow') || tl2.includes('tmr') || tl2.includes('tmrw')) {
+          events2      = await getTomorrowEvents();
+          periodLabel2 = 'tomorrow';
+        } else if (tl2.includes('next week')) {
+          const nextMon2 = new Date(); nextMon2.setDate(nextMon2.getDate() + 7); nextMon2.setHours(0,0,0,0);
+          const nextSun2 = new Date(nextMon2); nextSun2.setDate(nextMon2.getDate() + 6); nextSun2.setHours(23,59,59,999);
+          events2      = await getCalendarEventsForRange(nextMon2, nextSun2);
+          periodLabel2 = 'next week';
+        } else if (tl2.includes('this week') || tl2.includes('week')) {
+          events2      = await getThisWeekEvents();
+          periodLabel2 = 'this week';
+        } else if (tl2.includes('yesterday')) {
+          const { start: s2, end: e2 } = detectDateRange(originalQuery);
+          events2      = await getCalendarEventsForRange(s2, e2);
+          periodLabel2 = 'yesterday';
+        } else {
+          events2      = await getTodayEvents();
+          periodLabel2 = 'today';
+        }
+        const tz2 = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (events2.length > 0) {
+          const lines2 = events2.map((e) => {
+            if (e.allDay) return `• ${e.summary} — All day`;
+            const s = new Date(e.start).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: tz2 });
+            const en = e.end ? new Date(e.end).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: tz2 }) : '';
+            return `• ${e.summary}: ${s}${en ? ' to ' + en : ''}`;
+          }).join('\n');
+          system2 += `\n\n[CALENDAR DATA — ${periodLabel2.toUpperCase()}]\n${events2.length} event(s) fetched live:\n${lines2}\n[END CALENDAR DATA]\n\nMANDATORY: Report these events accurately. Do NOT say calendar access is unavailable.`;
+        } else {
+          system2 += `\n\n[CALENDAR DATA — ${periodLabel2.toUpperCase()}]\n0 events found for ${periodLabel2}.\n[END CALENDAR DATA]\n\nMANDATORY: Tell user there are no events for ${periodLabel2}. Do NOT say calendar is unavailable.`;
+        }
         const rawReply2 = await callClaude(apiMessages2, { system: system2 });
         const reply     = typeof rawReply2 === 'object' ? rawReply2.text : rawReply2;
         setMessages((prev) => [...prev, { role: 'assistant', content: reply, meta: { checked: 'calendar' } }].slice(-MAX_MESSAGES));
@@ -1154,7 +1215,7 @@ export default function ChatBot({
     onVisualizerState?.('processing');
 
     // Cancel any ongoing TTS
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    ttsStop();
 
     // ── Auto-expand panels based on message content ──────────────────────────
     const msgLower = text.toLowerCase();
@@ -1180,29 +1241,17 @@ export default function ChatBot({
         try {
           const { getMorningBriefing } = await import('../lib/morningBriefing.js');
           const briefingData = await getMorningBriefing({ city: 'Maharagama, Sri Lanka' });
-          const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
-          const response = await fetch('https://api.anthropic.com/v1/messages', {
-            method:  'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-api-key':    apiKey,
-              'anthropic-version': '2023-06-01',
-              'anthropic-dangerous-direct-browser-access': 'true',
-            },
-            body: JSON.stringify({
-              model:      'claude-sonnet-4-20250514',
-              max_tokens: 1500,
-              messages:   [{ role: 'user', content: briefingData.context }],
-            }),
-          });
-          const data        = await response.json();
-          const briefingText = data.content?.[0]?.text || 'Could not generate briefing.';
+
+          const briefingText = await callClaude(
+            [{ role: 'user', content: briefingData.context }],
+            { system: BRIEFING_SYSTEM, maxTokens: 800 }
+          );
+
           removeLastMessage();
-          addMessage({ role: 'assistant', content: briefingText, isBriefing: true });
-          if (!isMutedRef.current && window.speechSynthesis) {
-            const short = briefingText.replace(/[#*`]/g, '').replace(/\n\n/g, '. ').substring(0, 500);
-            speakText(short);
-          }
+          addMessage({ role: 'assistant', content: briefingText || 'Could not generate briefing.', isBriefing: true });
+
+          const short = briefingText.replace(/[#*`]/g, '').replace(/\n\n+/g, '. ').substring(0, 600);
+          speakText(short);
         } catch (err) {
           console.error('[TASKI] Briefing error:', err);
           removeLastMessage();
@@ -1231,37 +1280,10 @@ export default function ChatBot({
         return;
       }
 
-      // /website command — shows analysis message then opens the generator panel
+      // /website command — open the full-screen generator
       const websiteInlinePrompt = detectWebsiteRequest(text.trim());
       if (websiteInlinePrompt !== null) {
-        const panelMsg = {
-          role:    'assistant',
-          content: '[website-generator]',
-          meta:    { type: 'website-generator', prefillPrompt: websiteInlinePrompt },
-        };
-
-        if (websiteInlinePrompt) {
-          const wa = analyzePrompt(websiteInlinePrompt);
-          const featureHints = [
-            wa.features.wantsCharts    ? 'Charts included.' : '',
-            wa.brandName               ? `Using brand name: ${wa.brandName}.` : '',
-          ].filter(Boolean).join(' ');
-          const analysisMsg = [
-            `I'll create a ${wa.layoutType} for you.`,
-            `Detected: ${wa.theme} theme, ${wa.colors.accent1} accent, ${wa.visualStyle} style.`,
-            featureHints,
-            'Opening the website generator now...',
-          ].filter(Boolean).join('\n');
-
-          setMessages((prev) => [
-            ...prev,
-            { role: 'assistant', content: analysisMsg },
-            panelMsg,
-          ].slice(-MAX_MESSAGES));
-        } else {
-          setMessages((prev) => [...prev, panelMsg].slice(-MAX_MESSAGES));
-        }
-
+        openWebsiteGenerator?.(websiteInlinePrompt);
         setLoading(false);
         onVisualizerState?.('idle');
         return;
@@ -1724,13 +1746,87 @@ export default function ChatBot({
           return;
         }
         try {
-          const { start, end } = detectDateRange(text);
-          const events         = await getCalendarEventsForRange(start, end);
-          const calendarBlock  = buildCalendarContext(events, start, end);
-          system +=
-            `\n\nHere are the user's actual Google Calendar events:\n${calendarBlock}\n\n` +
-            `Use this real calendar data to answer their scheduling question accurately. Be concise and conversational.`;
+          const tl = text.toLowerCase();
+
+          // Determine the requested time period and use the correct specific helper.
+          let events       = [];
+          let periodLabel  = 'today';
+
+          if (tl.includes('tomorrow') || tl.includes('tmr') || tl.includes('tmrw') || tl.includes('next day')) {
+            console.log('[TASKI Calendar] Fetching TOMORROW events');
+            events      = await getTomorrowEvents();
+            periodLabel = 'tomorrow';
+          } else if (tl.includes('next week')) {
+            console.log('[TASKI Calendar] Fetching NEXT WEEK events');
+            const nextMon = new Date(); nextMon.setDate(nextMon.getDate() + 7); nextMon.setHours(0,0,0,0);
+            const nextSun = new Date(nextMon); nextSun.setDate(nextMon.getDate() + 6); nextSun.setHours(23,59,59,999);
+            events      = await getCalendarEventsForRange(nextMon, nextSun);
+            periodLabel = 'next week';
+          } else if (tl.includes('this week') || tl.includes('week') || tl.includes('next 7 days') || tl.includes('coming days')) {
+            console.log('[TASKI Calendar] Fetching THIS WEEK events');
+            events      = await getThisWeekEvents();
+            periodLabel = 'this week';
+          } else if (tl.includes('yesterday')) {
+            console.log('[TASKI Calendar] Fetching YESTERDAY events');
+            const { start, end } = detectDateRange(text);
+            events      = await getCalendarEventsForRange(start, end);
+            periodLabel = 'yesterday';
+          } else if (tl.includes('today') || tl.includes("today's") || tl.includes('this morning') || tl.includes('tonight') || tl.includes('schedule')) {
+            console.log('[TASKI Calendar] Fetching TODAY events');
+            events      = await getTodayEvents();
+            periodLabel = 'today';
+          } else {
+            // Generic calendar question (e.g. "do I have any meetings?") — fetch today + tomorrow
+            console.log('[TASKI Calendar] Fetching TODAY + TOMORROW events (default)');
+            const [todayEvts, tomorrowEvts] = await Promise.all([getTodayEvents(), getTomorrowEvents()]);
+            events      = [...todayEvts, ...tomorrowEvts];
+            periodLabel = 'today and tomorrow';
+          }
+
+          console.log(`[TASKI Calendar] Got ${events.length} event(s) for "${periodLabel}"`);
+          if (import.meta.env.DEV) {
+            events.forEach((e) => console.log('  -', e.summary, e.start ?? e.allDay ? '(all day)' : ''));
+          }
+
+          const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+          if (events.length > 0) {
+            const eventLines = events.map((e) => {
+              if (e.allDay) {
+                const d = new Date(`${e.start}T00:00:00`);
+                return `• ${e.summary} — All day on ${d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: tz })}`;
+              }
+              const startDt = new Date(e.start);
+              const endDt   = e.end ? new Date(e.end) : null;
+              const dayStr  = startDt.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: tz });
+              const startT  = startDt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: tz });
+              const endT    = endDt ? endDt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: tz }) : '';
+              return `• ${e.summary} — ${dayStr}, ${startT}${endT ? ' to ' + endT : ''}`;
+            }).join('\n');
+
+            system +=
+              `\n\n[CALENDAR DATA — ${periodLabel.toUpperCase()}]\n` +
+              `The following ${events.length} event(s) were just fetched LIVE from the user's Google Calendar:\n` +
+              `${eventLines}\n` +
+              `[END CALENDAR DATA]\n\n` +
+              `MANDATORY INSTRUCTIONS:\n` +
+              `- Report these ${events.length} event(s) to the user accurately\n` +
+              `- Include the day and time for each event\n` +
+              `- Do NOT say you cannot access calendar data — you have it above\n` +
+              `- Do NOT say live sync is needed — calendar IS connected and data IS live`;
+          } else {
+            system +=
+              `\n\n[CALENDAR DATA — ${periodLabel.toUpperCase()}]\n` +
+              `Google Calendar was queried successfully and returned 0 events for ${periodLabel}.\n` +
+              `[END CALENDAR DATA]\n\n` +
+              `MANDATORY INSTRUCTIONS:\n` +
+              `- Tell the user: no events scheduled for ${periodLabel}\n` +
+              `- Do NOT say you cannot access the calendar — it IS connected and returned 0 results\n` +
+              `- Do NOT say live sync is needed\n` +
+              `- You may offer to check a different time period`;
+          }
         } catch (calErr) {
+          console.error('[TASKI Calendar] Error:', calErr);
           const msg   = calErr.message ?? 'Unknown error';
           const reply = msg.toLowerCase().includes('cancel')
             ? "I need access to your Google Calendar to answer that. Please try again and complete the sign-in when prompted."
@@ -1784,7 +1880,7 @@ export default function ChatBot({
 
   async function triggerBriefing() {
     if (loading) return;
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    ttsStop();
     setLoading(true);
     onVisualizerState?.('processing');
     setMessages((prev) => [
@@ -1795,31 +1891,19 @@ export default function ChatBot({
     try {
       const { getMorningBriefing } = await import('../lib/morningBriefing.js');
       const briefingData = await getMorningBriefing({ city: 'Maharagama, Sri Lanka' });
-      const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method:  'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key':    apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify({
-          model:      'claude-sonnet-4-20250514',
-          max_tokens: 1500,
-          messages:   [{ role: 'user', content: briefingData.context }],
-        }),
-      });
-      const data        = await response.json();
-      const briefingText = data.content?.[0]?.text || 'Could not generate briefing.';
+
+      const briefingText = await callClaude(
+        [{ role: 'user', content: briefingData.context }],
+        { system: BRIEFING_SYSTEM, maxTokens: 800 }
+      );
+
       setMessages((prev) => [
         ...prev.slice(0, -1),
-        { role: 'assistant', content: briefingText, isBriefing: true },
+        { role: 'assistant', content: briefingText || 'Could not generate briefing.', isBriefing: true },
       ]);
-      if (!isMutedRef.current && window.speechSynthesis) {
-        const short = briefingText.replace(/[#*`]/g, '').replace(/\n\n/g, '. ').substring(0, 500);
-        speakText(short);
-      }
+
+      const short = briefingText.replace(/[#*`]/g, '').replace(/\n\n+/g, '. ').substring(0, 600);
+      speakText(short);
     } catch (err) {
       console.error('[TASKI] Briefing error:', err);
       setMessages((prev) => [
@@ -2301,6 +2385,28 @@ export default function ChatBot({
           {/* Header icon buttons */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
             <button
+              onClick={toggleMute}
+              aria-label={isMuted ? 'Unmute voice' : 'Mute voice'}
+              title={isMuted ? 'Voice is OFF — click to enable' : 'Voice is ON — click to mute'}
+              style={{
+                background:   isMuted ? 'rgba(255,68,68,0.08)' : 'transparent',
+                border:       `1px solid ${isMuted ? 'rgba(255,68,68,0.35)' : 'rgba(0,212,255,0.25)'}`,
+                borderRadius: '4px',
+                color:        isMuted ? 'rgba(255,68,68,0.75)' : 'rgba(0,212,255,0.75)',
+                width:        '26px',
+                height:       '26px',
+                cursor:       'pointer',
+                display:      'flex',
+                alignItems:   'center',
+                justifyContent: 'center',
+                fontSize:     '13px',
+                flexShrink:   0,
+                transition:   'all 0.15s',
+              }}
+            >
+              {isMuted ? '🔇' : '🔊'}
+            </button>
+            <button
               onClick={startNewChat}
               aria-label="New chat"
               title="New chat"
@@ -2660,19 +2766,6 @@ export default function ChatBot({
                   aspectRatio={msg.meta.aspectRatio}
                   fallbackUsed={msg.meta.fallbackUsed ?? false}
                   onRegenerate={(p, m) => handleImageRegeneration(msg.meta.requestId, p, m)}
-                />
-              </div>
-
-            ) : msg.meta?.type === 'website-generator' ? (
-              /* ── Website generator panel ── */
-              <div style={{ width: '100%' }}>
-                <WebsiteGeneratorPanel
-                  prefillPrompt={msg.meta.prefillPrompt}
-                  onGenerate={(html, prompt) => {
-                    onWebsiteGenerated?.({ html, prompt, id: `website_${Date.now()}` });
-                    const doneMsg = 'Your website is ready. It features GSAP scroll animations and professional design patterns. Use the viewport buttons to preview on mobile, or download the HTML file.';
-                    speakText(doneMsg);
-                  }}
                 />
               </div>
 
@@ -3220,11 +3313,7 @@ export default function ChatBot({
           {isSpeaking && (
             <button
               type="button"
-              onClick={() => {
-                window.speechSynthesis?.cancel();
-                setIsSpeaking(false);
-                onVisualizerState?.('idle');
-              }}
+              onClick={ttsStop}
               aria-label="Stop voice reply"
               title="Stop voice reply"
               style={{

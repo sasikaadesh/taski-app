@@ -628,12 +628,16 @@ Use day-by-day structure for itineraries. Include estimated costs where possible
     icon:         '🌐',
     color:        'rgba(0,212,255,0.1)',
     subcategories: [
-      sub('Landing Page', 'landing',   'Create a landing page for: '),
-      sub('Portfolio',    'portfolio', 'Create a portfolio website for: '),
-      sub('Dashboard',    'dashboard', 'Create a dashboard for: '),
-      sub('E-commerce',   'ecommerce', 'Create an e-commerce site for: '),
-      sub('Agency Site',  'agency',    'Create an agency website for: '),
-      sub('Blog',         'blog',      'Create a blog website for: '),
+      sub('Landing Page',   'landing',       'Build a stunning landing page for: '),
+      sub('Portfolio',      'portfolio',     'Build a creative portfolio website for: '),
+      sub('SaaS Product',   'saas',          'Build a SaaS product landing page for: '),
+      sub('Restaurant',     'restaurant',    'Build a luxury restaurant website for: '),
+      sub('Agency',         'agency',        'Build a bold creative agency website for: '),
+      sub('E-commerce',     'ecommerce',     'Build an e-commerce product page for: '),
+      sub('Blog',           'blog',          'Build a minimal blog website for: '),
+      sub('Event',          'event',         'Build an event or conference website for: '),
+      sub('Startup',        'startup',       'Build a startup launch website for: '),
+      sub('Personal Brand', 'personalbrand', 'Build a personal brand website for: '),
     ],
     prompt: `You are a world-class creative web developer and UI/UX designer. You create stunning, award-winning static HTML websites.
 

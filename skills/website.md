@@ -111,4 +111,10 @@ prompt: |
   - Output raw HTML — no markdown, no backticks
   - Start output with <!DOCTYPE html>
   - End output with </html>
+
+  ACCESS:
+  Users can also access the website builder directly by:
+  - Clicking ✦ WEBSITE in the footer bar
+  - Pressing Ctrl+Shift+W
+  - Typing /website in the chat
 ---

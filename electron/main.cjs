@@ -834,3 +834,144 @@ ipcMain.handle('rag-list', async (event) => {
 ipcMain.handle('rag-delete', async (event, filename) => {
   return runPython(event, ['--delete', filename])
 })
+
+// ── IPC: save-and-open-html ───────────────────────────────────────────────────
+
+ipcMain.handle('save-and-open-html', async (_event, html, filename) => {
+  try {
+    const tmpPath = path.join(app.getPath('temp'), filename || 'taski-website.html')
+    fs.writeFileSync(tmpPath, html, 'utf-8')
+    await shell.openExternal('file:///' + tmpPath.replace(/\\/g, '/'))
+    return { success: true, path: tmpPath }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+})
+
+// ── IPC: website archive ──────────────────────────────────────────────────────
+
+const WEBSITES_DIR   = path.join(app.getPath('documents'), 'Taski', 'websites')
+const WEBSITES_INDEX = path.join(WEBSITES_DIR, 'index.json')
+
+function ensureWebsitesDir() {
+  if (!fs.existsSync(WEBSITES_DIR)) fs.mkdirSync(WEBSITES_DIR, { recursive: true })
+}
+
+function readWebsiteIndex() {
+  try {
+    if (fs.existsSync(WEBSITES_INDEX)) return JSON.parse(fs.readFileSync(WEBSITES_INDEX, 'utf-8'))
+  } catch (e) {}
+  return []
+}
+
+function writeWebsiteIndex(index) {
+  fs.writeFileSync(WEBSITES_INDEX, JSON.stringify(index, null, 2), 'utf-8')
+}
+
+ipcMain.handle('websites-save', async (_event, { html, prompt, name }) => {
+  try {
+    ensureWebsitesDir()
+    const id       = 'site_' + Date.now()
+    const filename = id + '.html'
+    const filepath = path.join(WEBSITES_DIR, filename)
+    fs.writeFileSync(filepath, html, 'utf-8')
+
+    const siteName = name ||
+      (prompt || '').split(' ').slice(0, 5).join(' ').substring(0, 40) +
+      ((prompt || '').length > 40 ? '...' : '')
+
+    const entry = {
+      id,
+      name:        siteName || 'Untitled Site',
+      prompt:      prompt || '',
+      heroType:    data.heroType || 'normal',
+      createdAt:   new Date().toISOString(),
+      updatedAt:   new Date().toISOString(),
+      filename,
+      size:        html.length,
+      previewText: html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').substring(0, 150).trim(),
+    }
+
+    const index = readWebsiteIndex()
+    index.unshift(entry)
+    writeWebsiteIndex(index)
+    return { success: true, id, entry }
+  } catch (e) {
+    return { success: false, error: e.message }
+  }
+})
+
+ipcMain.handle('websites-list', async () => {
+  try {
+    return { success: true, sites: readWebsiteIndex() }
+  } catch (e) {
+    return { success: true, sites: [] }
+  }
+})
+
+ipcMain.handle('websites-load', async (_event, id) => {
+  try {
+    const index = readWebsiteIndex()
+    const entry = index.find((s) => s.id === id)
+    if (!entry) return { success: false, error: 'Not found' }
+    const filepath = path.join(WEBSITES_DIR, entry.filename)
+    const html     = fs.readFileSync(filepath, 'utf-8')
+    return { success: true, html, entry }
+  } catch (e) {
+    return { success: false, error: e.message }
+  }
+})
+
+ipcMain.handle('websites-delete', async (_event, id) => {
+  try {
+    const index = readWebsiteIndex()
+    const entry = index.find((s) => s.id === id)
+    if (entry) {
+      const filepath = path.join(WEBSITES_DIR, entry.filename)
+      if (fs.existsSync(filepath)) fs.unlinkSync(filepath)
+      writeWebsiteIndex(index.filter((s) => s.id !== id))
+    }
+    return { success: true }
+  } catch (e) {
+    return { success: false, error: e.message }
+  }
+})
+
+ipcMain.handle('websites-rename', async (_event, { id, name }) => {
+  try {
+    const index = readWebsiteIndex()
+    const entry = index.find((s) => s.id === id)
+    if (entry) {
+      entry.name      = name
+      entry.updatedAt = new Date().toISOString()
+      writeWebsiteIndex(index)
+    }
+    return { success: true }
+  } catch (e) {
+    return { success: false, error: e.message }
+  }
+})
+
+ipcMain.handle('websites-update', async (_event, { id, html, prompt }) => {
+  try {
+    ensureWebsitesDir()
+    const index = readWebsiteIndex()
+    const entry = index.find((s) => s.id === id)
+    if (!entry) return { success: false, error: 'Not found' }
+    const filepath = path.join(WEBSITES_DIR, entry.filename)
+    fs.writeFileSync(filepath, html, 'utf-8')
+    entry.updatedAt = new Date().toISOString()
+    entry.size      = html.length
+    if (prompt) entry.prompt = prompt
+    writeWebsiteIndex(index)
+    return { success: true, entry }
+  } catch (e) {
+    return { success: false, error: e.message }
+  }
+})
+
+ipcMain.handle('websites-open-folder', async () => {
+  ensureWebsitesDir()
+  shell.openPath(WEBSITES_DIR)
+  return { success: true }
+})

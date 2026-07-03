@@ -312,6 +312,7 @@ function normaliseEvents(items) {
     const start  = ev.start?.dateTime ?? ev.start?.date ?? '';
     const end    = ev.end?.dateTime   ?? ev.end?.date   ?? '';
     return {
+      id:         ev.id ?? `${(ev.summary ?? '').slice(0, 20)}_${start}`,
       summary:    ev.summary ?? '(No title)',
       start,
       end,
@@ -345,4 +346,37 @@ function fmtTime(iso) {
   } catch {
     return iso;
   }
+}
+
+// ── Convenience helpers ───────────────────────────────────────────────────────
+
+export function getTodayEvents() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const end = new Date(today);
+  end.setHours(23, 59, 59, 999);
+  return getCalendarEventsForRange(today, end);
+}
+
+export function getTomorrowEvents() {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(0, 0, 0, 0);
+  const end = new Date(tomorrow);
+  end.setHours(23, 59, 59, 999);
+  return getCalendarEventsForRange(tomorrow, end);
+}
+
+export function getThisWeekEvents() {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+  return getCalendarEventsForRange(start, end);
+}
+
+/** Thin alias for getCalendarEventsForRange kept for external callers. */
+export function getEventsForDateRange(startDate, endDate) {
+  return getCalendarEventsForRange(startDate, endDate);
 }

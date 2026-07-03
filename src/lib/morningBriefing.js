@@ -1,43 +1,75 @@
 // morningBriefing.js — fetches weather, calendar, todos, and emails for the daily briefing.
 
+function formatHourlyTime(time) {
+  if (time === '0' || time === '000') return '12am';
+  if (time === '1200') return '12pm';
+  const num = parseInt(time, 10) / 100;
+  return num > 12 ? (num - 12) + 'pm' : num + 'am';
+}
+
 async function getWeather(city) {
   const location = city || 'Maharagama,Sri Lanka';
   const url = `https://wttr.in/${encodeURIComponent(location)}?format=j1`;
 
   try {
-    const res  = await fetch(url);
-    const data = await res.json();
+    const res = await fetch(url, {
+      signal:  AbortSignal.timeout(8000),
+      headers: { 'Accept': 'application/json', 'User-Agent': 'Taski/1.0' },
+    });
 
+    // wttr.in occasionally returns an HTML error page instead of JSON (bad city, rate limit, etc).
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('json') && !contentType.includes('text')) {
+      throw new Error('Unexpected response content-type: ' + contentType);
+    }
+
+    const text = await res.text();
+    if (text.trim().startsWith('<')) {
+      throw new Error('Got HTML instead of JSON');
+    }
+
+    const data    = JSON.parse(text);
     const current = data.current_condition[0];
     const today   = data.weather[0];
 
     return {
-      temp:        current.temp_C + '°C',
-      feels:       current.FeelsLikeC + '°C',
-      description: current.weatherDesc[0].value,
-      humidity:    current.humidity + '%',
-      maxTemp:     today.maxtempC + '°C',
-      minTemp:     today.mintempC + '°C',
-      hourly:      today.hourly.map((h) => ({
-        time:          h.time === '0' ? '12am' : h.time === '1200' ? '12pm' : parseInt(h.time) / 100 + ':00',
-        temp:          h.tempC + '°C',
-        desc:          h.weatherDesc[0].value,
-        chanceOfRain:  h.chanceofrain + '%',
-      })).slice(0, 4),
+      temp:          current.temp_C + '°C',
+      feelsLike:     current.FeelsLikeC + '°C',
+      description:   current.weatherDesc[0].value,
+      humidity:      current.humidity + '%',
+      maxTemp:       today.maxtempC + '°C',
+      minTemp:       today.mintempC + '°C',
+      chanceOfRain:  today.hourly
+        .map((h) => parseInt(h.chanceofrain, 10))
+        .reduce((a, b) => Math.max(a, b), 0),
+      hourly: today.hourly.slice(0, 4).map((h) => ({
+        time: formatHourlyTime(h.time),
+        temp: h.tempC + '°C',
+        desc: h.weatherDesc[0].value,
+        rain: h.chanceofrain + '%',
+      })),
     };
   } catch (e) {
-    console.warn('Weather fetch failed:', e);
+    console.warn('[Briefing] Weather failed:', e.message);
     return null;
   }
 }
 
 async function getTodayCalendarEvents() {
   try {
-    const { getCalendarEvents } = await import('./googleCalendar.js');
-    const today = new Date().toISOString().split('T')[0];
-    return await getCalendarEvents(today);
+    const calModule = await import('./googleCalendar.js');
+
+    // Prefer the local-timezone-safe helper; fall back to the raw date-string API.
+    if (calModule.getTodayEvents) {
+      return await calModule.getTodayEvents();
+    }
+    if (calModule.getCalendarEvents) {
+      const today = new Date().toISOString().split('T')[0];
+      return await calModule.getCalendarEvents(today);
+    }
+    return [];
   } catch (e) {
-    console.warn('Calendar fetch failed:', e);
+    console.warn('[Briefing] Calendar:', e.message);
     return [];
   }
 }
@@ -61,7 +93,7 @@ function getTodayTodos() {
     return todos.filter(
       (t) => !t.done && (t.dueDate === today || t.dueDate === tomorrow || t.dueDate === 'tomorrow')
     );
-  } catch (e) {
+  } catch {
     return [];
   }
 }
@@ -84,16 +116,24 @@ async function getImportantEmails() {
       unreadCount: unread.status   === 'fulfilled' ? (unread.value || []).length : 0,
     };
   } catch (e) {
-    console.warn('Email fetch failed:', e);
+    console.warn('[Briefing] Email fetch failed:', e.message);
     return { important: [], unreadCount: 0 };
   }
 }
 
 export async function getMorningBriefing(options = {}) {
   const city = options.city || 'Maharagama, Sri Lanka';
+  const tz   = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const now  = new Date();
   console.log('[TASKI] Starting morning briefing fetch...');
 
-  const [weatherResult, calendarResult, emailsResult] = await Promise.allSettled([
+  const dateStr = now.toLocaleDateString('en-US', {
+    timeZone: tz, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+  });
+  const timeStr = now.toLocaleTimeString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit' });
+
+  // Fetch everything in parallel — a slow/failing source never blocks the others.
+  const [weatherResult, calendarResult, emailResult] = await Promise.allSettled([
     getWeather(city),
     getTodayCalendarEvents(),
     getImportantEmails(),
@@ -103,104 +143,74 @@ export async function getMorningBriefing(options = {}) {
   let todos = [];
   try {
     todos = await Promise.resolve(getTodayTodos());
-  } catch (e) {
+  } catch {
     todos = [];
   }
 
-  const weatherData = weatherResult.status === 'fulfilled' ? weatherResult.value : null;
-  const events      = calendarResult.status === 'fulfilled' ? (calendarResult.value || []) : [];
-  const emailData   = emailsResult.status  === 'fulfilled'
-    ? emailsResult.value
-    : { important: [], unreadCount: 0 };
+  const weather = weatherResult.status  === 'fulfilled' ? weatherResult.value : null;
+  const events  = calendarResult.status === 'fulfilled' ? (calendarResult.value || []) : [];
+  const emails  = emailResult.status    === 'fulfilled' ? emailResult.value : { important: [], unreadCount: 0 };
 
-  const tz      = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const now     = new Date();
-  const timeStr = now.toLocaleTimeString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit' });
-  const dateStr = now.toLocaleDateString('en-US', {
-    timeZone: tz, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-  });
+  // Build a clean, concise context string — too much raw data causes Claude to truncate.
+  const sections = [];
+  sections.push(`DATE: ${dateStr}, ${timeStr}`);
+  sections.push(`LOCATION: ${city}`);
 
-  let context =
-    `Generate a concise friendly morning briefing for the user.\n\n` +
-    `Date: ${dateStr}\nTime: ${timeStr}\nLocation: ${city}\n\n`;
-
-  if (weatherData) {
-    context +=
-      `WEATHER TODAY:\n` +
-      `Current: ${weatherData.temp} (feels like ${weatherData.feels})\n` +
-      `Condition: ${weatherData.description}\n` +
-      `High: ${weatherData.maxTemp} Low: ${weatherData.minTemp}\n` +
-      `Humidity: ${weatherData.humidity}\n`;
-
-    if (weatherData.hourly?.length) {
-      context += `Hourly forecast:\n`;
-      weatherData.hourly.forEach((h) => {
-        context +=
-          `  ${h.time}: ${h.temp} - ${h.desc}` +
-          (h.chanceOfRain !== '0%' ? ` (rain: ${h.chanceOfRain})` : '') +
-          '\n';
-      });
-    }
-    context += '\n';
+  if (weather) {
+    const rainNote = weather.chanceOfRain > 40 ? ' — BRING UMBRELLA' : '';
+    sections.push(
+      `WEATHER: ${weather.temp} (feels ${weather.feelsLike}), ${weather.description}, ` +
+      `High ${weather.maxTemp} / Low ${weather.minTemp}, Humidity ${weather.humidity}${rainNote}`
+    );
   } else {
-    context += `WEATHER: Could not fetch weather.\n\n`;
+    sections.push('WEATHER: Unavailable');
   }
 
   if (events.length > 0) {
-    context += `CALENDAR EVENTS TODAY:\n`;
-    events.forEach((e) => {
+    sections.push('CALENDAR TODAY:');
+    events.slice(0, 5).forEach((e) => {
       const title = e.title || e.summary || 'Untitled';
-      let startStr = 'All day';
-      if (e.start && e.start.includes('T')) {
-        try {
-          startStr = new Date(e.start).toLocaleTimeString('en-US', {
-            timeZone: tz, hour: '2-digit', minute: '2-digit',
-          });
-        } catch { /* keep All day */ }
-      }
-      context += `- ${title} at ${startStr}`;
-      if (e.location) context += ` @ ${e.location}`;
-      context += '\n';
+      const start = e.start && !e.allDay
+        ? new Date(e.start).toLocaleTimeString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit' })
+        : 'All day';
+      sections.push(`  • ${title} at ${start}`);
     });
-    context += '\n';
   } else {
-    context += `CALENDAR: No events scheduled today.\n\n`;
+    sections.push('CALENDAR: No events today');
   }
 
-  if (todos.length > 0) {
-    context += `PENDING TASKS:\n`;
-    todos.forEach((t) => {
-      context += `- [${(t.priority || 'normal').toUpperCase()}] ${t.title}`;
-      if (t.dueTime) context += ` at ${t.dueTime}`;
-      context += '\n';
+  const pendingTodos = todos.filter((t) => !t.done);
+  if (pendingTodos.length > 0) {
+    sections.push('PENDING TASKS:');
+    pendingTodos.slice(0, 5).forEach((t) => {
+      sections.push(`  • [${(t.priority || 'med').toUpperCase()}] ${t.title}`);
     });
-    context += '\n';
   } else {
-    context += `TASKS: No pending tasks.\n\n`;
+    sections.push('TASKS: Nothing pending');
   }
 
-  if (emailData.unreadCount > 0) {
-    context += `INBOX: ${emailData.unreadCount} unread emails.\n`;
+  if (emails.unreadCount > 0) {
+    sections.push(`INBOX: ${emails.unreadCount} unread`);
   }
-  if (emailData.important?.length > 0) {
-    context += `IMPORTANT EMAILS:\n`;
-    emailData.important.forEach((e) => {
-      context += `- From: ${e.from}\n  Subject: ${e.subject}\n`;
+  if (emails.important?.length > 0) {
+    sections.push('IMPORTANT EMAILS:');
+    emails.important.slice(0, 3).forEach((e) => {
+      sections.push(`  • ${e.subject} — from ${e.from}`);
     });
-    context += '\n';
   }
 
-  context +=
-    `\nBRIEFING INSTRUCTIONS:\n` +
-    `1. Start with a warm greeting using the time of day (Good morning/afternoon)\n` +
-    `2. Give weather summary with practical advice (bring umbrella if rain likely, dress warm if cold etc)\n` +
-    `3. List today's calendar events clearly\n` +
-    `4. Mention priority tasks\n` +
-    `5. Flag any important emails that need attention (payments, renewals etc)\n` +
-    `6. End with a brief motivational note\n` +
-    `Keep it concise, friendly and practical.\n` +
-    `Use markdown for nice formatting.\n` +
-    `Add relevant emojis for each section.`;
+  const dataContext = sections.join('\n');
 
-  return { context, weatherData, events, todos, emailData };
+  const context =
+    `Generate a concise morning briefing using this data:\n\n${dataContext}\n\n` +
+    `Format:\n` +
+    `1. Warm greeting (morning/afternoon)\n` +
+    `2. Weather in 1-2 sentences with practical advice if needed\n` +
+    `3. Calendar events (if any)\n` +
+    `4. Top priority tasks (if any)\n` +
+    `5. Email flag (if important emails)\n` +
+    `6. One line motivational close\n\n` +
+    `Use markdown: ## for sections, bullet points for lists. Keep it under 250 words. Be warm and friendly.`;
+
+  return { context, rawData: { weather, events, todos, emails } };
 }

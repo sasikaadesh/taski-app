@@ -57,5 +57,17 @@ contextBridge.exposeInMainWorld('taskiAPI', {
   // Open a URL in the system browser
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
 
+  // Save HTML to temp file and open in system browser
+  saveAndOpenHtml: (html, filename) => ipcRenderer.invoke('save-and-open-html', html, filename),
+
+  // Website archive
+  websitesSave:       (data) => ipcRenderer.invoke('websites-save', data),
+  websitesList:       ()     => ipcRenderer.invoke('websites-list'),
+  websitesLoad:       (id)   => ipcRenderer.invoke('websites-load', id),
+  websitesDelete:     (id)   => ipcRenderer.invoke('websites-delete', id),
+  websitesRename:     (data) => ipcRenderer.invoke('websites-rename', data),
+  websitesUpdate:     (data) => ipcRenderer.invoke('websites-update', data),
+  websitesOpenFolder: ()     => ipcRenderer.invoke('websites-open-folder'),
+
   isElectron: true,
 })

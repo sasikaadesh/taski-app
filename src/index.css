@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* ── Native select dropdown dark styling ──────────────────────────────────── */
+select option {
+  background: #0a1628;
+  color: #e0f4ff;
+  font-family: 'Rajdhani', sans-serif;
+}
+
 /* ── Tron neon design-system tokens ───────────────────────────────────────── */
 :root {
   /* Backgrounds */
@@ -180,6 +187,12 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 @keyframes backdropOut {
   from { opacity: 1; }
   to   { opacity: 0; }
+}
+
+/* ── Spinner ──────────────────────────────────────────────────────────────── */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
 
 /* ── HUD status pulse ─────────────────────────────────────────────────────── */
