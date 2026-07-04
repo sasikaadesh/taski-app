@@ -175,6 +175,18 @@ const SECTIONS = [
     ],
   },
   {
+    title: 'DEEP RESEARCH MODE',
+    items: [
+      'Ask TASKI to research anything and it performs a multi-source web investigation',
+      'Trigger phrases: "do a research", "investigate", "find out which", "top 5 companies", "market research"',
+      'Example: "Research top 5 cleaning companies in Sri Lanka and tell me which don\'t have websites"',
+      'Example: "Investigate the best CRM tools for small businesses and compare pricing"',
+      'Example: "Find restaurants in Colombo that don\'t have online ordering"',
+      'Results include a findings table, analysis, and actionable recommendations',
+      'Works with voice commands too',
+    ],
+  },
+  {
     title: 'PRIVACY AND SECURITY',
     items: [
       'Your Google password is never stored in Taski — Google handles the login',

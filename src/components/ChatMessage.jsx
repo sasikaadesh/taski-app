@@ -82,6 +82,23 @@ export default function ChatMessage({
         dangerouslySetInnerHTML={{ __html: html }}
       />
 
+      {/* Deep research badge */}
+      {meta?.isResearch && (
+        <div style={{
+          marginTop:     '6px',
+          padding:       '3px 8px',
+          background:    'rgba(0,212,255,0.05)',
+          borderLeft:    '2px solid rgba(0,212,255,0.4)',
+          borderRadius:  '0 4px 4px 0',
+          fontSize:      '10px',
+          color:         'rgba(0,212,255,0.55)',
+          fontFamily:    "'Rajdhani', sans-serif",
+          letterSpacing: '0.05em',
+        }}>
+          🔬 Deep Research · Multi-source web investigation
+        </div>
+      )}
+
       {/* Web search sources */}
       {sources?.length > 0 && (
         <div style={{

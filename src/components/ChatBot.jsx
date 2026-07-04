@@ -5,7 +5,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Mic, Clock, VolumeX, SquarePen } from 'lucide-react';
-import { callClaude, CHATBOT_SYSTEM, EMAIL_DRAFT_SYSTEM } from '../lib/claude';
+import { callClaude, CHATBOT_SYSTEM, EMAIL_DRAFT_SYSTEM, buildResearchSystemPrompt } from '../lib/claude';
 import ChatMessage from './ChatMessage';
 import { getAllSkills, getSkill } from '../lib/skillLoader';
 import { generateWithImagen, enhanceImagePrompt, detectAspectRatio, IMAGEN_MODELS } from '../lib/imagenGenerator';
@@ -561,6 +561,30 @@ const BRIEFING_PHRASES = [
 
 const BRIEFING_SYSTEM = 'You are TASKI, a friendly AI assistant giving a morning briefing. Be warm, concise, and helpful.';
 
+// ── Deep Research Mode intent detection ──────────────────────────────────────
+
+const RESEARCH_TRIGGERS = [
+  'do a research', 'do research',
+  'research and', 'research on',
+  'research about', 'deep research',
+  'investigate', 'find out',
+  'analyze', 'analyse',
+  'compare', 'comparison',
+  'market research', 'competitor',
+  'top 5', 'top 10', 'top three',
+  'best options', 'which is better',
+  'pros and cons', 'evaluate',
+  'gather information', 'look into',
+  'what are the best', 'find me the best',
+  'which of them', 'shortlist',
+];
+
+// The length check avoids false triggers on short casual messages like "compare?"
+function isResearchRequest(text) {
+  const lower = text.toLowerCase();
+  return RESEARCH_TRIGGERS.some((t) => lower.includes(t)) && text.length > 25;
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 /**
@@ -607,6 +631,7 @@ export default function ChatBot({
   const [isDragging,          setIsDragging]          = useState(false);
   const [webSearchMode,       setWebSearchMode]       = useState(false);
   const [isSearching,         setIsSearching]         = useState(false);
+  const [isResearching,       setIsResearching]       = useState(false);
   const [audioPausedBySystem, setAudioPausedBySystem] = useState(false);
 
   // ── Chat history ──────────────────────────────────────────────────────────
@@ -896,6 +921,7 @@ export default function ChatBot({
     setUploadingFile(null);
     setWebSearchMode(false);
     setIsSearching(false);
+    setIsResearching(false);
     sessionIdRef.current = chatHistory.startNewSession();
   }
 
@@ -1459,6 +1485,49 @@ export default function ChatBot({
         setPendingEmailContext(null);
         // Fall through to normal intent detection
       }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // BRANCH 1.5 — Deep Research Mode (multi-search investigation)
+    // ════════════════════════════════════════════════════════════════════════
+    if (isResearchRequest(text)) {
+      console.log('[TASKI] Route: DEEP RESEARCH');
+      setIsSearching(true);
+      setIsResearching(true);
+      addMessage({
+        role:    'assistant',
+        content: '🔬 **Research Mode Active**\n\nConducting multi-source research on your request. This may take 30-60 seconds for thorough results...',
+        isProgress: true,
+      });
+
+      try {
+        const apiMessages = next.map(({ role, content }) => ({ role, content }));
+        const result = await callClaude(apiMessages, {
+          system:       buildResearchSystemPrompt(),
+          useWebSearch: true,
+          maxSearches:  10,
+          maxTokens:    4000,
+        });
+
+        removeLastMessage();
+
+        const researchText = typeof result === 'object' ? result.text : result;
+        const sources       = (typeof result === 'object' && result.sources) ? result.sources : [];
+        addMessage({ role: 'assistant', content: researchText, meta: { sources, isResearch: true } });
+
+        if (!isMutedRef.current) {
+          speakText('Research complete. I found detailed results for you. Please review the findings in the chat.');
+        }
+      } catch (err) {
+        removeLastMessage();
+        setError(err.message);
+        onVisualizerState?.('idle');
+      } finally {
+        setLoading(false);
+        setIsSearching(false);
+        setIsResearching(false);
+      }
+      return;
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -3102,6 +3171,25 @@ export default function ChatBot({
             <span style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: '10px', fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#00d4ff' }}>
               SEARCHING THE WEB...
             </span>
+          </div>
+        )}
+
+        {/* Deep research indicator */}
+        {isResearching && (
+          <div style={{
+            padding:       '6px 12px',
+            background:    'rgba(0,212,255,0.05)',
+            borderTop:     '1px solid rgba(0,212,255,0.12)',
+            display:       'flex',
+            alignItems:    'center',
+            gap:           '8px',
+            fontSize:      '10px',
+            fontFamily:    'Rajdhani',
+            letterSpacing: '0.1em',
+            color:         '#00d4ff',
+          }}>
+            <span style={{ display: 'inline-block', animation: 'spin 1.2s linear infinite' }}>🔬</span>
+            DEEP RESEARCH IN PROGRESS — SEARCHING MULTIPLE SOURCES...
           </div>
         )}
 
