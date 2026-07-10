@@ -1,11 +1,27 @@
 // ambientSound.js — HTML5 Audio wrapper for ambient background music.
+// Single source of truth for playback state: always read isAmbientPlaying(), never cache it.
+// Every state transition — including ones the element triggers internally — emits
+// 'taski-ambient-changed' with { playing } so buttons can subscribe instead of guessing.
 
 const audio = new Audio('/sounds/ambient.mp3');
 audio.loop   = true;
 audio.volume = 0.4;
 
-let userVolume = 0.4;   // 0.0 – 1.0, mirrors audio.volume at non-ducked level
-let fadeTimer  = null;
+let userVolume   = 0.4;   // 0.0 – 1.0, mirrors audio.volume at non-ducked level
+let fadeTimer    = null;
+let lastNotified = null;  // dedupe so subscribers only hear real transitions
+
+function notify() {
+  const playing = !audio.paused;
+  if (playing === lastNotified) return;
+  lastNotified = playing;
+  window.dispatchEvent(new CustomEvent('taski-ambient-changed', { detail: { playing } }));
+}
+
+// Element events cover every transition, including internal ones (ended, OS media keys).
+audio.addEventListener('play',  notify);
+audio.addEventListener('pause', notify);
+audio.addEventListener('ended', notify);
 
 function fadeVolume(targetVol, durationMs) {
   if (fadeTimer) { clearInterval(fadeTimer); fadeTimer = null; }
@@ -21,12 +37,32 @@ function fadeVolume(targetVol, durationMs) {
   }, interval);
 }
 
-export function startAmbient() {
-  audio.play().catch(() => {});
+export function isAmbientPlaying() { return !audio.paused; }
+
+/**
+ * Resolves true when playback actually started. audio.play() is async and can
+ * reject (autoplay policy) — state is only announced after the promise settles,
+ * so subscribers never see a "playing" that isn't real.
+ */
+export async function playAmbient() {
+  try {
+    await audio.play();
+    notify();
+    return true;
+  } catch {
+    notify(); // still paused — re-announce so any optimistic UI corrects itself
+    return false;
+  }
 }
 
-export function stopAmbient() {
+export function pauseAmbient() {
   audio.pause();
+  notify();
+}
+
+export function toggleAmbient() {
+  if (audio.paused) playAmbient();
+  else              pauseAmbient();
 }
 
 export function setAmbientVolume(vol) {
@@ -49,5 +85,4 @@ export function restoreAmbient() {
   fadeVolume(userVolume, 500);
 }
 
-export function getIsPlaying() { return !audio.paused; }
 export function getUserVolume() { return userVolume; }

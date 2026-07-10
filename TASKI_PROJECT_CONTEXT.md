@@ -61,7 +61,7 @@ taski-app/
     │   ├── websiteGenerator.js    # AI website generation (Claude API)
     │   ├── mcpFileService.js      # MCP filesystem integration
     │   ├── n8nTodoSync.js         # N8N webhook todo sync
-    │   ├── ambientAudio.js        # Background music singleton
+    │   ├── ambientSound.js        # Background music singleton (single source of truth, emits 'taski-ambient-changed')
     │   └── researchMode.js        # Deep research system prompt
     └── hooks/
         ├── useDraggable.js        # Draggable panel hook (saves position)
@@ -91,7 +91,7 @@ processMessage(userMessage) {
 - Falls back to Web Speech API
 - Storage key: `localStorage['taski_tts_enabled']` (true = unmuted)
 - Events: `taski-tts-changed`, `taski-tts-speaking`
-- **Known past bug:** Website generator mute button was leaving `audioPausedBySystem` stuck — FIXED
+- **Removed (July 2026):** the `taski-audio-pause`/`taski-audio-resume` events and the `audioPausedBySystem` flag are gone. Only the STOP button, the mute toggle, or a new reply stops speech — nothing else may.
 
 ### Voice Input
 - Web Speech API is **permanently broken** in Electron (Google shutdown)
@@ -168,9 +168,10 @@ processMessage(userMessage) {
 - Sound toggle (🔊/🔇) in generator header = TTS only (not ambient)
 
 ### Ambient Music
-- `ambientAudio.js` singleton — independent from TTS
-- AMBIENT ▐▐/▶ button + volume slider in header
-- Does NOT pause when website generator opens (TTS does, ambient doesn't)
+- `ambientSound.js` singleton — independent from TTS, single source of truth for playback state
+- Emits `taski-ambient-changed` on every transition; buttons subscribe via `useAmbientPlaying()` hook (never local guessed state)
+- AMBIENT ▐▐/▶ button + volume slider in header; own ▶/❚❚ AMBIENT button in the website generator top bar
+- Does NOT pause when website generator opens
 
 ### N8N Integration
 - ⚡ WORKFLOWS button in footer

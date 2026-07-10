@@ -6,6 +6,8 @@ import JSZip from 'jszip';
 import { generateWebsite, validateProjectCompleteness } from '../lib/websiteGenerator';
 import { getSkill } from '../lib/skillLoader';
 import { isTTSEnabled, setTTSEnabled } from '../lib/ttsManager';
+import { toggleAmbient } from '../lib/ambientSound';
+import { useAmbientPlaying } from '../hooks/useAmbientPlaying';
 import HeroPicker from './HeroPicker';
 
 const GENERATE_STEPS = [
@@ -129,15 +131,9 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
     return () => window.removeEventListener('taski-tts-changed', onTTSChange);
   }, []);
 
-  // Watchdog: keep re-canceling any speech that manages to start while muted
-  useEffect(() => {
-    if (!isMuted) return;
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
-    const watchdog = setInterval(() => {
-      if (window.speechSynthesis?.speaking) window.speechSynthesis.cancel();
-    }, 500);
-    return () => clearInterval(watchdog);
-  }, [isMuted]);
+  // Ambient music is fully independent from TTS and keeps playing while the
+  // generator is open — this only mirrors the singleton's state for the button.
+  const isAmbientOn = useAmbientPlaying();
 
   // Cleanup elapsed-time timer on unmount
   useEffect(() => {
@@ -147,17 +143,6 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
   const themeConfig = selectedTheme === 'custom'
     ? { id: 'custom', customColor }
     : (COLOR_THEMES.find(t => t.id === selectedTheme) || COLOR_THEMES[0]);
-
-  // Pause audio on mount, restore on unmount
-  useEffect(() => {
-    console.log('[WebGen] Pausing audio...');
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
-    window.dispatchEvent(new CustomEvent('taski-audio-pause', { detail: { reason: 'website-generator' } }));
-    return () => {
-      console.log('[WebGen] Resuming audio...');
-      window.dispatchEvent(new CustomEvent('taski-audio-resume', { detail: { reason: 'website-generator' } }));
-    };
-  }, []);
 
   // Load archive on mount so the badge/list is ready before the user opens the tab
   useEffect(() => {
@@ -520,20 +505,9 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
           ✦ WEBSITE GENERATOR
         </span>
 
-        {/* Sound toggle */}
-        <button
-          onClick={() => {
-            const newEnabled = !isTTSEnabled();
-            setTTSEnabled(newEnabled);
-            setIsMuted(!newEnabled);
-
-            if (!newEnabled) {
-              window.speechSynthesis?.cancel();
-              window.dispatchEvent(new CustomEvent('taski-audio-pause', { detail: { reason: 'manual-mute' } }));
-            } else {
-              window.dispatchEvent(new CustomEvent('taski-audio-resume', { detail: { reason: 'manual-unmute' } }));
-            }
-          }}
+        {/* Sound toggle — TTS only; setTTSEnabled cancels speech and broadcasts taski-tts-changed */}
+        {/* <button
+          onClick={() => setTTSEnabled(!isTTSEnabled())}
           title={isMuted ? 'Sound is OFF — click to enable' : 'Sound is ON — click to mute'}
           style={{
             background:     isMuted ? 'rgba(255,68,68,0.08)' : 'rgba(0,212,255,0.06)',
@@ -560,6 +534,42 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
           }}
         >
           {isMuted ? '🔇' : '🔊'}
+        </button> */}
+
+        {/* Ambient music toggle — the header button is hidden behind this overlay */}
+        <button
+          onClick={() => toggleAmbient()}
+          aria-label={isAmbientOn ? 'Pause ambient music' : 'Play ambient music'}
+          title={isAmbientOn ? 'Ambient music is playing — click to pause' : 'Ambient music is paused — click to play'}
+          style={{
+            background:     'rgba(0,212,255,0.06)',
+            border:         '1px solid rgba(0,212,255,0.2)',
+            borderRadius:   '6px',
+            height:         '34px',
+            padding:        '0 10px',
+            display:        'flex',
+            alignItems:     'center',
+            justifyContent: 'center',
+            gap:            '6px',
+            cursor:         'pointer',
+            fontSize:       '10px',
+            fontFamily:     "'Rajdhani', sans-serif",
+            letterSpacing:  '0.1em',
+            color:          'rgba(0,212,255,0.5)',
+            transition:     'all 0.2s',
+            flexShrink:     0,
+          }}
+          onMouseEnter={e => {
+            e.currentTarget.style.borderColor = 'rgba(0,212,255,0.5)';
+            e.currentTarget.style.background  = 'rgba(0,212,255,0.12)';
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.borderColor = 'rgba(0,212,255,0.2)';
+            e.currentTarget.style.background  = 'rgba(0,212,255,0.06)';
+          }}
+        >
+          <span style={{ fontSize: '12px', lineHeight: 1 }}>{isAmbientOn ? '❚❚' : '▶'}</span>
+          AMBIENT
         </button>
 
         <div style={{ flex: 1 }} />

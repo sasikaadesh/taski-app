@@ -15,10 +15,11 @@ import HudHeader             from './components/HudHeader';
 import HudFooter             from './components/HudFooter';
 import { useDraggable }           from './hooks/useDraggable';
 import { useTelegramPolling }    from './hooks/useTelegramPolling';
+import { useAmbientPlaying }     from './hooks/useAmbientPlaying';
 import { createCalendarEvent, getCalendarEventsForRange, isSignedIn } from './lib/googleCalendar';
 import {
-  startAmbient,
-  stopAmbient,
+  playAmbient,
+  toggleAmbient,
   setAmbientVolume,
   duckAmbient,
   duckAmbientForSpeech,
@@ -152,16 +153,23 @@ export default function App() {
   }
 
   // ── Ambient music ─────────────────────────────────────────────────────────
-  const [isAmbientPlaying, setIsAmbientPlaying] = useState(true);
-  const [ambientVolume,    setAmbientVolumeState] = useState(40);
+  // Playback truth lives in ambientSound.js; this just subscribes to it.
+  const isAmbientPlaying = useAmbientPlaying();
+  const [ambientVolume, setAmbientVolumeState] = useState(40);
 
   useEffect(() => {
-    startAmbient();
-    const resume = () => startAmbient();
-    document.addEventListener('click',      resume, { once: true });
-    document.addEventListener('keydown',    resume, { once: true });
-    document.addEventListener('touchstart', resume, { once: true });
+    let cancelled = false;
+    const resume = () => { playAmbient(); };
+    // Only fall back to a first-gesture retry when autoplay is actually blocked —
+    // otherwise the retry would fight a deliberate pause on the user's first click.
+    playAmbient().then((started) => {
+      if (cancelled || started) return;
+      document.addEventListener('click',      resume, { once: true });
+      document.addEventListener('keydown',    resume, { once: true });
+      document.addEventListener('touchstart', resume, { once: true });
+    });
     return () => {
+      cancelled = true;
       document.removeEventListener('click',      resume);
       document.removeEventListener('keydown',    resume);
       document.removeEventListener('touchstart', resume);
@@ -179,10 +187,6 @@ export default function App() {
     }
   }, [visualizerState, isAmbientPlaying]);
 
-  function toggleAmbient() {
-    if (isAmbientPlaying) { stopAmbient(); setIsAmbientPlaying(false); }
-    else                  { startAmbient(); setIsAmbientPlaying(true); }
-  }
   function handleAmbientVolume(val) {
     setAmbientVolumeState(val);
     setAmbientVolume(val / 100);
@@ -288,7 +292,7 @@ export default function App() {
         <HudHeader
           isAmbientPlaying={isAmbientPlaying}
           ambientVolume={ambientVolume}
-          onAmbientToggle={toggleAmbient}
+          onAmbientToggle={() => toggleAmbient()}
           onVolumeChange={handleAmbientVolume}
           onHelp={() => setHelpModalOpen(true)}
         />

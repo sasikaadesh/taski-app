@@ -3,6 +3,7 @@
 import { sendMessage, sendTyping } from './telegramService';
 import { transcribeAudio }         from './whisperService';
 import { callClaude }              from './claude';
+import { speakText }               from './ttsManager';
 
 export async function processTelegramMessage(token, chatId, userText, username) {
   console.log('[Telegram] Processing:', userText);
@@ -40,6 +41,7 @@ export async function processTelegramMessage(token, chatId, userText, username) 
       );
       const text = typeof result === 'object' ? result.text : result;
       await sendMessage(token, chatId, text);
+      speakText(text); // ttsManager checks the mute flag itself
       return;
     } catch (e) {
       await sendMessage(token, chatId, 'Could not get morning briefing: ' + e.message);
@@ -137,6 +139,7 @@ export async function processTelegramMessage(token, chatId, userText, username) 
     );
     const text = typeof result === 'object' ? result.text : result;
     await sendMessage(token, chatId, text || 'Sorry, I could not process that request.');
+    if (text) speakText(text); // ttsManager checks the mute flag itself
   } catch (e) {
     await sendMessage(token, chatId, 'Error: ' + e.message);
   }

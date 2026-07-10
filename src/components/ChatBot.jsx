@@ -632,7 +632,6 @@ export default function ChatBot({
   const [webSearchMode,       setWebSearchMode]       = useState(false);
   const [isSearching,         setIsSearching]         = useState(false);
   const [isResearching,       setIsResearching]       = useState(false);
-  const [audioPausedBySystem, setAudioPausedBySystem] = useState(false);
 
   // ── Chat history ──────────────────────────────────────────────────────────
   const chatHistory    = useChatHistory();
@@ -655,26 +654,6 @@ export default function ChatBot({
   const triggerBriefingRef = useRef(null);
   const isMutedRef = useRef(isMuted); // keep ref in sync for use inside callbacks
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
-
-  // Listen for audio pause/resume events from other panels (e.g. website generator)
-  useEffect(() => {
-    function handleAudioPause(e) {
-      console.log('[TTS] Pausing due to:', e.detail.reason);
-      ttsStop();
-      setIsSpeaking(false);
-      setAudioPausedBySystem(true);
-    }
-    function handleAudioResume(e) {
-      console.log('[TTS] Resume signal from:', e.detail.reason);
-      setAudioPausedBySystem(false);
-    }
-    window.addEventListener('taski-audio-pause',  handleAudioPause);
-    window.addEventListener('taski-audio-resume', handleAudioResume);
-    return () => {
-      window.removeEventListener('taski-audio-pause',  handleAudioPause);
-      window.removeEventListener('taski-audio-resume', handleAudioResume);
-    };
-  }, []);
 
   // ── External chat insert (for footer buttons) ──────────────────────────────
   const insertTextFnRef = useRef(null);
@@ -839,12 +818,11 @@ export default function ChatBot({
   /**
    * Speak `text` via the shared ttsManager (the single source of truth for TTS state).
    * Sets visualizer to 'speaking' on start, 'idle' on end.
-   * No-op if isMuted is true or audio is paused by another panel.
+   * No-op if isMuted is true.
    */
   const speakText = useCallback((text) => {
     console.log('[ChatBot speakText] called:', {
       isMuted: isMutedRef.current,
-      audioPausedBySystem,
       ttsEnabled: localStorage.getItem('taski_tts_enabled'),
       textLength: text?.length,
     });
@@ -853,12 +831,8 @@ export default function ChatBot({
       onVisualizerState?.('idle');
       return;
     }
-    if (audioPausedBySystem) {
-      console.log('[ChatBot speakText] BLOCKED: paused by system');
-      return;
-    }
     ttsSpeak(text);
-  }, [onVisualizerState, audioPausedBySystem]);
+  }, [onVisualizerState]);
 
   // Reflect ttsManager's actual speaking state onto the visualizer + isSpeaking flag
   useEffect(() => {
