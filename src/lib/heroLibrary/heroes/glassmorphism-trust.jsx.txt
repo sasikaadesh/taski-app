@@ -1,0 +1,232 @@
+// GlassmorphismTrust — curated library hero: split 12-column glass hero with an eyebrow badge, three-line headline (gradient middle line), CTA pair, backdrop-blur stats card (featured stat, progress bar, mini-stat row, tag pills) and a client-name marquee, all CSS-only motion
+
+export default function GlassmorphismTrust({ data }) {
+  const {
+    eyebrow, title, subtitle,
+    ctas = [], images = [], stats = [],
+    progress, tags = [], clients = [], clientsHeading,
+  } = data || {};
+
+  // The source design spreads the headline over three lines, the middle one gradient.
+  const words = String(title || '').trim().split(/\s+/).filter(Boolean);
+  const per = Math.ceil(words.length / 3);
+  const line1 = words.slice(0, per).join(' ');
+  const line2 = words.slice(per, per * 2).join(' ');
+  const line3 = words.slice(per * 2).join(' ');
+
+  const featured = stats[0];
+  const miniStats = stats.slice(1, 4);
+  const pct = progress ? Math.max(0, Math.min(100, Number(progress.percent) || 0)) : 0;
+  const hasCard = !!(featured || progress || tags.length);
+  const marqueeClients = clients.length ? [...clients, ...clients, ...clients] : [];
+
+  const rise = (i) => ({ animation: `gt-up 0.8s ease-out ${0.1 + i * 0.1}s both` });
+
+  const headlineMask = 'linear-gradient(180deg, black 0%, black 80%, transparent 100%)';
+  const bgMask = 'linear-gradient(180deg, transparent, black 0%, black 70%, transparent)';
+  const marqueeMask = 'linear-gradient(to right, transparent, black 20%, black 80%, transparent)';
+
+  return (
+    <section className="relative min-h-screen w-full overflow-hidden bg-bg text-text">
+      <style>{`
+        @keyframes gt-up {
+          from { opacity: 0; transform: translateY(20px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes gt-marquee {
+          from { transform: translateX(0); }
+          to   { transform: translateX(-50%); }
+        }
+      `}</style>
+
+      {images[0] && images[0].url && (
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 z-0 bg-cover bg-center opacity-40"
+          style={{ backgroundImage: `url(${images[0].url})`, maskImage: bgMask, WebkitMaskImage: bgMask }}
+        />
+      )}
+
+      <div className="relative z-10 mx-auto flex min-h-screen w-full max-w-7xl items-center px-4 py-24 sm:px-6 lg:px-8">
+        <div className="grid w-full grid-cols-1 items-start gap-12 lg:grid-cols-12 lg:gap-8">
+
+          <div className="flex flex-col justify-center space-y-8 pt-8 lg:col-span-7">
+            {eyebrow && (
+              <div style={rise(0)}>
+                <div className="inline-flex items-center gap-2 rounded-full border border-text/10 bg-text/5 px-3 py-1.5 backdrop-blur-md transition-colors hover:bg-text/10">
+                  <span className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-text/70 sm:text-xs">
+                    {eyebrow}
+                    <svg aria-hidden="true" className="h-3.5 w-3.5 text-accent" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z" />
+                    </svg>
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <h1
+              className="font-heading text-5xl font-medium leading-[0.95] tracking-tighter text-text sm:text-6xl lg:text-7xl"
+              style={{ ...rise(1), maskImage: headlineMask, WebkitMaskImage: headlineMask }}
+            >
+              {line1}
+              {line2 && (
+                <>
+                  <br />
+                  <span className="bg-gradient-to-br from-text via-text to-accent bg-clip-text text-transparent">
+                    {line2}
+                  </span>
+                </>
+              )}
+              {line3 && (
+                <>
+                  <br />
+                  {line3}
+                </>
+              )}
+            </h1>
+
+            {subtitle && (
+              <p className="max-w-xl text-lg leading-relaxed text-text/60" style={rise(2)}>
+                {subtitle}
+              </p>
+            )}
+
+            {ctas.length > 0 && (
+              <div className="flex flex-col gap-4 sm:flex-row" style={rise(3)}>
+                {ctas.map((cta, i) =>
+                  cta.variant === 'primary' ? (
+                    <a
+                      key={i}
+                      href={cta.href}
+                      className="group inline-flex items-center justify-center gap-2 rounded-full bg-primary px-8 py-4 text-sm font-semibold text-bg transition-all hover:scale-[1.02] hover:bg-primary/90 active:scale-[0.98]"
+                    >
+                      {cta.label}
+                      <svg aria-hidden="true" className="h-4 w-4 transition-transform group-hover:translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M5 12h14" />
+                        <path d="m12 5 7 7-7 7" />
+                      </svg>
+                    </a>
+                  ) : (
+                    <a
+                      key={i}
+                      href={cta.href}
+                      className="group inline-flex items-center justify-center gap-2 rounded-full border border-text/10 bg-text/5 px-8 py-4 text-sm font-semibold text-text backdrop-blur-sm transition-colors hover:border-text/20 hover:bg-text/10"
+                    >
+                      <svg aria-hidden="true" className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M6 3l14 9-14 9V3z" />
+                      </svg>
+                      {cta.label}
+                    </a>
+                  )
+                )}
+              </div>
+            )}
+          </div>
+
+          {(hasCard || marqueeClients.length > 0) && (
+            <div className="space-y-6 lg:col-span-5 lg:mt-12">
+              {hasCard && (
+                <div className="relative overflow-hidden rounded-3xl border border-text/10 bg-surface/40 p-8 shadow-2xl backdrop-blur-xl" style={rise(4)}>
+                  <div aria-hidden="true" className="pointer-events-none absolute right-0 top-0 -mr-16 -mt-16 h-64 w-64 rounded-full bg-primary/10 blur-3xl" />
+
+                  <div className="relative z-10">
+                    {featured && (
+                      <div className="mb-8 flex items-center gap-4">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-text/10 ring-1 ring-text/20">
+                          <svg aria-hidden="true" className="h-6 w-6 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <circle cx="12" cy="12" r="10" />
+                            <circle cx="12" cy="12" r="6" />
+                            <circle cx="12" cy="12" r="2" />
+                          </svg>
+                        </div>
+                        <div>
+                          <div className="text-3xl font-bold tracking-tight text-text">{featured.value}</div>
+                          <div className="text-sm text-text/60">{featured.label}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {progress && (
+                      <div className="mb-8 space-y-3">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-text/60">{progress.label}</span>
+                          <span className="font-medium text-text">{pct}%</span>
+                        </div>
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-text/10">
+                          <div className="h-full rounded-full bg-gradient-to-r from-primary to-accent" style={{ width: pct + '%' }} />
+                        </div>
+                      </div>
+                    )}
+
+                    {miniStats.length > 0 && (
+                      <>
+                        <div className="mb-6 h-px w-full bg-text/10" />
+                        <div className="grid grid-cols-3 divide-x divide-text/10 text-center">
+                          {miniStats.map((s, i) => (
+                            <div key={i} className="flex cursor-default flex-col items-center justify-center transition-transform hover:-translate-y-1">
+                              <span className="text-xl font-bold text-text sm:text-2xl">{s.value}</span>
+                              <span className="text-[10px] font-medium uppercase tracking-wider text-text/50 sm:text-xs">{s.label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
+
+                    {tags.length > 0 && (
+                      <div className="mt-8 flex flex-wrap gap-2">
+                        {tags.map((tag, i) => (
+                          <div key={i} className="inline-flex items-center gap-1.5 rounded-full border border-text/10 bg-text/5 px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-text/70">
+                            {i === 0 ? (
+                              <span className="relative flex h-2 w-2">
+                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75"></span>
+                                <span className="relative inline-flex h-2 w-2 rounded-full bg-accent"></span>
+                              </span>
+                            ) : (
+                              <svg aria-hidden="true" className="h-3 w-3 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.735H5.81a1 1 0 0 1-.957-.735L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z" />
+                                <path d="M5 21h14" />
+                              </svg>
+                            )}
+                            {tag}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {marqueeClients.length > 0 && (
+                <div className="relative overflow-hidden rounded-3xl border border-text/10 bg-surface/40 py-8 backdrop-blur-xl" style={rise(5)}>
+                  {clientsHeading && (
+                    <h3 className="mb-6 px-8 text-sm font-medium text-text/60">{clientsHeading}</h3>
+                  )}
+                  <div
+                    className="relative flex overflow-hidden"
+                    style={{ maskImage: marqueeMask, WebkitMaskImage: marqueeMask }}
+                  >
+                    <div
+                      className="flex gap-12 whitespace-nowrap px-4"
+                      style={{ animation: 'gt-marquee 40s linear infinite' }}
+                    >
+                      {marqueeClients.map((name, i) => (
+                        <div key={i} className="flex cursor-default items-center gap-2 opacity-50 transition-all hover:scale-105 hover:opacity-100">
+                          <svg aria-hidden="true" className="h-5 w-5 text-text" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M6 3h12l4 6-10 13L2 9Z" />
+                            <path d="M11 3 8 9l4 13 4-13-3-6" />
+                            <path d="M2 9h20" />
+                          </svg>
+                          <span className="text-lg font-bold tracking-tight text-text">{name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}

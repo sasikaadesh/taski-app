@@ -34,5 +34,14 @@
     "description": "Centered minimal hero with a sparkle eyebrow pill, two-line headline whose second line fades via a gradient, subtitle, CTA pair (primary carries an arrow that nudges on hover), and an optional stats row with hairline dividers (data.stats: [{ value, label }]). Everything enters with a staggered CSS-only fade-up; palette-neutral so it works on light or dark themes. Adapted from 21st.dev: moumensoliman/hero-section-shadcnui (MIT).",
     "thumbnail": "thumbnails/sparkle-stats.png",
     "requiredContentFields": ["eyebrow", "title", "subtitle", "ctas"]
+  },
+  {
+    "slug": "glassmorphism-trust",
+    "name": "Glassmorphism Trust",
+    "styleTags": ["dark", "glassmorphism", "backdrop-blur", "stats-card", "logo-marquee", "animated"],
+    "mood": ["premium", "confident", "sleek"],
+    "description": "Social-proof-led split hero: eyebrow badge with star, three-line headline whose middle line carries a text-to-accent gradient, subtitle and CTA pair beside a backdrop-blur glass stats card (featured stat from data.stats[0], optional progress bar via data.progress { label, percent }, mini-stat row from data.stats[1..3], uppercase tag pills from data.tags) and a client-name marquee from data.clients (optional data.clientsHeading); images[0] becomes a masked background wash when provided. Staggered CSS-only fade-up entrances; marquee logos simplified to a shared gem mark + name. Adapted from Hossain Jahed's Glassmorphism Trust Hero (21st.dev: easemize/glassmorphism-trust-hero, free community component — no explicit license published; distributed for reuse via the 21st.dev CLI).",
+    "thumbnail": "thumbnails/glassmorphism-trust.png",
+    "requiredContentFields": ["eyebrow", "title", "subtitle", "ctas"]
   }
 ]

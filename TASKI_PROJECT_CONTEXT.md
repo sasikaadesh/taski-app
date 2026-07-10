@@ -71,6 +71,13 @@ taski-app/
 
 ---
 
+## Claude Subagents (`.claude/agents/`)
+Two Claude Code subagents auto-delegate for specialized work (markdown definitions only — no app code):
+- **website-generator-expert** — triggers on any change to the `/website` builder pipeline: `websiteGenerator.js`, generated Next.js output, content JSON schema (site/hero/sections), scaffold templates, semantic theming, self-check, or iterate mode. Tools: Read/Grep/Glob/Edit (no Bash — never runs builds).
+- **hero-library-curator** — triggers when adding/converting a 21st.dev hero, editing `src/lib/heroLibrary/catalog.json`, or auditing `heroes/*.jsx.txt`. Enforces the Phase 2 conversion contract (strip deps, CSS-only motion, semantic theme classes, props-driven copy, honest catalog entry + author credit) and STOPS instead of silently stripping unconvertible effects. Tools: Read/Grep/Glob/Edit/WebFetch.
+
+---
+
 ## Key Architecture Decisions
 
 ### Chatbot Message Routing (5 routes in order)
