@@ -1,0 +1,20 @@
+{
+  "type": "library",
+  "librarySlug": "glass-aurora",
+  "eyebrow": "Curated hero library",
+  "title": "Northern lights for your landing page",
+  "subtitle": "This project was exported through the library-hero pipeline: the glass-aurora component came from src/lib/heroLibrary, themed entirely by content/site.json tokens.",
+  "ctas": [
+    {
+      "label": "Get Started",
+      "href": "#cta",
+      "variant": "primary"
+    },
+    {
+      "label": "See Features",
+      "href": "#features",
+      "variant": "secondary"
+    }
+  ],
+  "images": []
+}

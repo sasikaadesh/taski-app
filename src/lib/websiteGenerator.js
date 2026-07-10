@@ -1,138 +1,15 @@
-// websiteGenerator.js — generates complete, stunning static HTML websites via Claude AI.
+// websiteGenerator.js — generates a Next.js (App Router, static export) project via
+// Claude AI, split into four passes: design brief, deterministic scaffold, section
+// components, and content JSON. Output is a flat { path: contents } files map, never
+// a single HTML string — see TASKI_PROJECT_CONTEXT.md / project plan for the schema.
 
-const WEBSITE_SYSTEM_PROMPT = `
-You are an elite frontend designer at a studio known for distinctive, never-generic websites. You follow these principles rigorously (Anthropic Frontend Design methodology):
+import { getHero, heroComponentName, listHeroes } from './heroLibrary/index.js';
 
-═══ DESIGN PHILOSOPHY ═══
-
-GROUND IT IN THE SUBJECT:
-Before designing, identify the concrete subject, its audience, and the page's job. Build every choice from the subject's own world — its materials, vocabulary, visual language. Never default to generic startup aesthetics regardless of subject.
-
-THE HERO IS A THESIS:
-Open with the most characteristic thing in the subject's world. Not just headline + subtitle + button — that is the lazy default. Consider: a striking image, an animated reveal, an unexpected layout, a live element. Make a deliberate, justified choice.
-
-TYPOGRAPHY CARRIES PERSONALITY:
-Choose a characterful display face and a complementary body face from Google Fonts — not the same pairing you'd use for any project. Set a clear type scale with intentional weight and spacing.
-
-AVOID THESE OVERUSED AI DEFAULTS:
-(1) cream background + serif + terracotta
-(2) near-black + single acid-green/vermilion accent
-(3) newspaper-style hairline-rule columns
-Pick something else unless the brief specifically asks for one of these.
-
-STRUCTURE ENCODES MEANING:
-Only number things that are truly sequential. Dividers and labels should communicate real information, not decorate.
-
-ONE BOLD SIGNATURE CHOICE:
-Spend your boldness in exactly one memorable element. Keep everything else disciplined and quiet around it.
-
-═══ MANDATORY COMPLETE STRUCTURE ═══
-
-You MUST generate ALL of these sections in full — this is non-negotiable:
-
-1. <nav> — Fixed/sticky navigation, logo, 5-6 links, CTA button. Backdrop blur. The nav MUST have a fixed, known height: nav { height: 70px; position: fixed; top: 0; left: 0; right: 0; z-index: 100; }
-
-2. <section class="hero"> — Full viewport height, the thesis statement, animated entrance, 1-2 CTAs, scroll indicator
-
-3. <section class="about"> — 2-column or asymmetric layout, real paragraph copy (80-150 words), one supporting Unsplash image
-
-4. <section class="features"> — Grid of 4-6 cards, each with icon/image, title, 2-sentence description
-
-5. <section class="gallery"> — Visual showcase grid with 4-6 real Unsplash images relevant to the subject, hover effects
-
-6. <section class="testimonials"> — 2-3 testimonial cards with quote, name, role
-
-7. <section class="cta"> — Bold closing call-to-action with contrasting background
-
-8. <footer> — Multi-column: brand blurb, 3-4 link columns, social icons, copyright
-
-CRITICAL: Do not stop after the hero. Do not stop after about. You MUST write the complete HTML through every single section listed above, ending with the closing </footer></body></html> tags. A response that does not include the footer is an INCOMPLETE and FAILED response.
-
-═══ REAL IMAGES — UNSPLASH ═══
-
-Embed real images using this exact pattern:
-<img src="https://images.unsplash.com/photo-{ID}?w=1200&q=80&auto=format" alt="descriptive alt text" loading="lazy">
-
-Good Unsplash photo IDs by subject:
-Coffee/dark: 1447933601652-e9dcff3b40df
-Luxury/dark: 1414235077428-338989a2e8c0
-Food/restaurant: 1504674900247-0877df9cc836
-Architecture: 1486325212027-8081e485255e
-Nature/landscape: 1506905925346-21bda4d32df4
-Technology: 1518770660439-4636190af475
-Fashion/style: 1469334031218-e382a71b716b
-People/portrait: 1507003211169-0a1dd7228f2d
-Abstract/texture: 1557682250-33bd709cbe85
-Business/office: 1497366216548-37526070297c
-City/urban: 1477959858617-67f85cf4f1df
-Interior/design: 1555041469-149743f17dc4
-Fitness/gym: 1534438327167-9be0be031527
-Beauty/spa: 1516975080664-ed2fc6a32937
-Startup/work: 1522202176988-66273c2fd55f
-Music/concert: 1493225457124-a3eb161ffa5f
-Travel/adventure: 1469854523086-cc02fe5d8800
-Sport/action: 1517649763962-0c623066013b
-Medical/health: 1576671081837-49000212a0fc
-Education: 1523050854058-8df90110c9f1
-
-Select photo IDs matching the subject matter. Use 4-8 different images across the gallery and supporting sections. Vary the IDs — never repeat the same image twice on one page.
-
-VERIFIED WORKING UNSPLASH IDs — prefer these when they fit the subject:
-technology: 1518770660439-4636190af475, 1461749280684-dccba630e2f6, 1550751827-4bd374c3f58b
-medical: 1559757148-5c350d0d3c56, 1576091160399-112ba8d25d1d, 1631815588090-d4bfec5b1ccb
-education: 1503676260728-1c00da094a0b, 1523050854058-8df90110c9f1, 1509062522246-3755977927d7
-business: 1497366216548-37526070297c, 1454165804606-c3d57bc86b40, 1507679799987-c73779587ccf
-nature: 1441974231531-c6227db76b6e, 1506905925346-21bda4d32df4, 1469474968028-56623f02e42e
-food: 1504674900247-0877df9cc836, 1414235077428-338989a2e8c0, 1567620905732-2d1ec7ab7445
-architecture: 1486325212027-8081e485255e, 1480714378408-67cf0d13bc1b, 1431576901776-e539bd916ba2
-people: 1507003211169-0a1dd7228f2d, 1500648767791-00dcc994a43e, 1438761681033-6461ffad8d80
-abstract: 1557682250-33bd709cbe85, 1518655048521-f130df041f66, 1487017159836-4e23ece2e4cf
-
-Always use this full URL format with fit=crop: https://images.unsplash.com/photo-{ID}?w=800&h=600&q=80&auto=format&fit=crop
-
-Every <img> tag MUST include an onerror fallback so a failed load never leaves a blank hole:
-<img src="https://images.unsplash.com/photo-{ID}?w=800&q=80&auto=format&fit=crop" alt="descriptive alt text" loading="lazy" onerror="this.style.background='linear-gradient(135deg,#1a1a3e,#0a0a2e)';this.src='';this.onerror=null;" style="width:100%;height:100%;object-fit:cover;">
-
-For any card or section background-image that uses an Unsplash URL, always layer a gradient fallback behind it so a failed load still shows color:
-.card-image { background: url('unsplash-url') center/cover, linear-gradient(135deg, #1a1a3e, #2a2a6e); }
-
-═══ LAYOUT RULES — HERO CLEARANCE ═══
-
-CRITICAL: The hero section must have padding-top equal to the nav height (70px) so no content is hidden behind the sticky navigation. Apply to every hero type:
-.hero { padding-top: 70px; box-sizing: border-box; }
-.hero-content { padding-top: 80px !important; }
-Use min-height: calc(100vh) on the hero, not height: 100vh, so content is never clipped. The hero-content div must be positioned to be fully visible below the navigation bar.
-
-IMPORTANT: The scroll indicator ("EXPLORE"/"SCROLL" element) must NEVER overlap the hero CTA buttons. Either add margin-bottom: 80px to .hero-content, or position the scroll indicator to the side instead of center-bottom:
-.hero-scroll { position: absolute; bottom: 2rem; right: 3rem; left: auto; transform: none; writing-mode: vertical-rl; letter-spacing: 0.2em; pointer-events: none; z-index: 2; }
-.hero-cta { margin-bottom: 60px; }
-Test that CTA buttons are fully visible and never covered by the scroll indicator.
-
-═══ MOTION ═══
-
-Add purposeful animation:
-- Hero entrance animation on page load
-- IntersectionObserver-based scroll reveals for each section (fade + slight translateY)
-- Hover micro-interactions on cards/buttons
-- Respect prefers-reduced-motion
-
-═══ TECHNICAL RULES ═══
-
-- Output ONLY raw HTML, no markdown fences
-- Start with <!DOCTYPE html>, end with </html>
-- All CSS in one <style> block in <head>
-- Google Fonts via @import url(...)
-- CSS custom properties (--color-x) for tokens
-- All <a> tags use href="#"
-- Mobile responsive: test breakpoints at 768px and 480px
-- Smooth scroll-behavior on html element
-
-Write efficient, compact CSS — avoid excessive repetition — so you have token budget to complete EVERY section. Prioritize finishing all 8 sections over excessive polish on any single one. A complete simple page beats an incomplete beautiful one.
-`;
+const MODEL = 'claude-sonnet-4-6';
 
 // ── Low-level API helper ───────────────────────────────────────────────────────
 
-async function callClaudeForWebsite(userMessage, systemPrompt, maxTokens) {
+async function callClaudeAPI(userMessage, systemPrompt, maxTokens) {
   const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -144,7 +21,7 @@ async function callClaudeForWebsite(userMessage, systemPrompt, maxTokens) {
       'anthropic-dangerous-direct-browser-access': 'true',
     },
     body: JSON.stringify({
-      model:      'claude-sonnet-4-6',
+      model:      MODEL,
       max_tokens: maxTokens,
       system:     systemPrompt,
       messages:   [{ role: 'user', content: userMessage }],
@@ -157,394 +34,891 @@ async function callClaudeForWebsite(userMessage, systemPrompt, maxTokens) {
   }
 
   const data = await response.json();
-
   const rawText = (data.content || [])
     .filter(b => b.type === 'text')
     .map(b => b.text)
     .join('')
     .trim();
 
-  let html = rawText
-    .replace(/^```html?\s*/i, '')
-    .replace(/```\s*$/i, '')
-    .trim();
-
-  return {
-    html,
-    stopReason: data.stop_reason,
-    usage:      data.usage,
-    rawText,
-  };
+  return { rawText, stopReason: data.stop_reason, usage: data.usage };
 }
 
-// ── Post-process raw HTML from a pass ─────────────────────────────────────────
-
-function extractHtml(raw) {
-  let html = raw
-    .replace(/^```html?\s*/i, '')
-    .replace(/```\s*$/i, '')
-    .trim();
-
-  const doctypeIdx = html.toLowerCase().indexOf('<!doctype');
-  if (doctypeIdx > 0) {
-    html = html.substring(doctypeIdx);
-  } else if (!html.toLowerCase().startsWith('<!doctype')) {
-    const htmlIdx = html.toLowerCase().indexOf('<html');
-    if (htmlIdx >= 0) html = html.substring(htmlIdx);
-  }
-
-  return html;
+function extractJson(raw) {
+  const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+  const start = text.indexOf('{');
+  const end   = text.lastIndexOf('}');
+  if (start < 0 || end < 0) throw new Error('No JSON object found in response');
+  return JSON.parse(text.substring(start, end + 1));
 }
 
-// ── Iteration summary ──────────────────────────────────────────────────────────
-// Sending the full previous HTML back to Claude for every small tweak burns ~10K
-// input tokens and is slow. Instead, summarize the existing site's structure/design
-// tokens and ask Claude to regenerate from scratch while preserving that direction.
-
-function summarizeHtmlForIteration(html) {
-  const sections = [];
-  const sectionMatches = html.matchAll(/<(?:section|div)[^>]+(?:id|class)="([^"]+)"/gi);
-  for (const m of sectionMatches) {
-    sections.push(m[1].split(' ')[0]);
-  }
-
-  return {
-    totalLength: html.length,
-    sections:    [...new Set(sections)].slice(0, 20),
-    hasCanvas:   html.includes('<canvas'),
-    hasCarousel: html.includes('carousel'),
-    hasContact:  html.includes('contact'),
-    cssVars:     (html.match(/--[\w-]+:\s*[^;]+/g) || []).slice(0, 10),
-    fonts:       (html.match(/family=([^&"']+)/g) || []).slice(0, 3),
-  };
-}
-
-// ── Main generation function ──────────────────────────────────────────────────
-
-export async function generateWebsite(userPrompt, options = {}, previousHtml = null) {
-  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('VITE_ANTHROPIC_API_KEY is not set. Add it to your .env file.');
-  }
-
-  // Build user message
-  let userMessage = '';
-
-  if (previousHtml) {
-    const summary = summarizeHtmlForIteration(previousHtml);
-
-    userMessage =
-      `WEBSITE UPDATE REQUEST\n\n` +
-      `Current site summary:\n` +
-      `- Total size: ${summary.totalLength} chars\n` +
-      `- Sections: ${summary.sections.join(', ')}\n` +
-      `- Has canvas 3D: ${summary.hasCanvas}\n` +
-      `- Has carousel: ${summary.hasCarousel}\n` +
-      `- Has contact: ${summary.hasContact}\n` +
-      `- Font families: ${summary.fonts.join(', ')}\n` +
-      `- CSS vars: ${summary.cssVars.join('; ')}\n\n` +
-      `UPDATE REQUESTED: "${userPrompt}"\n\n` +
-      `Generate the COMPLETE updated website HTML from scratch applying this change. ` +
-      `Preserve the overall design direction, color scheme, fonts, and sections. ` +
-      `Only change what was explicitly requested.\n` +
-      `Start with <!DOCTYPE html>, end with </html>. ` +
-      `Include ALL 8 sections: nav, hero, about, features, gallery, testimonials, cta, footer.`;
-  } else {
-    userMessage =
-      `Create a complete stunning website.\n\n` +
-      `BRIEF: ${userPrompt}\n\n` +
-      `STYLE: ${options.style || 'Premium, distinctive, memorable'}\n` +
-      `INDUSTRY: ${options.industry || 'Detect from brief'}\n` +
-      `COLORS: ${options.colors || 'Choose deliberately for this brief'}\n\n` +
-      `REQUIREMENTS:\n` +
-      `- Complete HTML from <!DOCTYPE html> to </html>\n` +
-      `- ALL 8 required sections: nav, hero, about, features, gallery, testimonials, cta, footer\n` +
-      `- Real Unsplash images matching the subject (4-8 images, vary the IDs)\n` +
-      `- Distinctive typography from Google Fonts\n` +
-      `- Impressive hero with CSS animation\n` +
-      `- Real compelling copy (no lorem ipsum, no placeholders)\n` +
-      `- All links use href="#"\n` +
-      `- Mobile responsive\n` +
-      `- IntersectionObserver scroll animations\n\n` +
-      `Output ONLY the raw HTML. Start with <!DOCTYPE html> immediately. Do not wrap in code blocks.`;
-
-    // Append hero-type-specific instructions
-    if (!options.heroType || options.heroType === 'normal') {
-      userMessage += `
-
-HERO SECTION REQUIREMENTS — STATIC HERO:
-The hero must use a real Unsplash image as a full-viewport background.
-
-HTML structure:
-<section class="hero" id="hero">
-  <div class="hero-bg"></div>
-  <div class="hero-overlay"></div>
-  <div class="hero-content">
-    <p class="hero-eyebrow">tagline text</p>
-    <h1 class="hero-title">Main Headline</h1>
-    <p class="hero-subtitle">Supporting copy</p>
-    <div class="hero-cta">
-      <a href="#" class="btn-primary">Primary CTA</a>
-      <a href="#" class="btn-secondary">Secondary CTA</a>
-    </div>
-  </div>
-  <div class="hero-scroll"><span>SCROLL</span><div class="scroll-line"></div></div>
-</section>
-
-CSS requirements:
-.hero { position: relative; min-height: calc(100vh); padding-top: 70px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-.hero-bg { position: absolute; inset: 0; background-image: url('https://images.unsplash.com/photo-{RELEVANT_ID}?w=1600&q=85&auto=format'); background-size: cover; background-position: center; transform: scale(1.05); animation: heroBgZoom 8s ease-out forwards; }
-.hero-overlay { position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.5) 50%, rgba(0,0,0,0.8) 100%); }
-.hero-content { position: relative; z-index: 2; text-align: center; max-width: 800px; padding: 80px 2rem 0; animation: heroFadeUp 1.2s ease-out forwards; }
-.hero-cta { margin-bottom: 60px; }
-@keyframes heroBgZoom { from { transform: scale(1.05); } to { transform: scale(1); } }
-@keyframes heroFadeUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
-.hero-scroll { position: absolute; bottom: 2rem; right: 3rem; left: auto; transform: none; writing-mode: vertical-rl; display: flex; flex-direction: column; align-items: center; gap: 8px; color: rgba(255,255,255,0.5); font-size: 10px; letter-spacing: 0.2em; z-index: 2; pointer-events: none; }
-.scroll-line { width: 1px; height: 40px; background: linear-gradient(to bottom, rgba(255,255,255,0.5), transparent); animation: scrollPulse 2s ease-in-out infinite; }
-@keyframes scrollPulse { 0%, 100% { opacity: 0.3; transform: scaleY(1); } 50% { opacity: 1; transform: scaleY(0.6); } }
-CRITICAL: the scroll indicator (.hero-scroll) must never overlap .hero-cta — keep it to the side as shown above, not centered at the bottom.`;
-    } else if (options.heroType === 'carousel') {
-      userMessage += `
-
-HERO SECTION REQUIREMENTS — CAROUSEL HERO:
-Build a full-viewport hero that auto-slides through 4 different Unsplash images with smooth crossfade transitions. Include headline overlay, dot navigation, and arrow controls. Use pure CSS + JS, no library.
-
-HTML structure:
-<section class="hero" id="hero">
-  <div class="carousel-track">
-    <div class="carousel-slide active" style="background-image:url('https://images.unsplash.com/photo-{ID1}?w=1600&q=80&auto=format')"></div>
-    <div class="carousel-slide" style="background-image:url('https://images.unsplash.com/photo-{ID2}?w=1600&q=80&auto=format')"></div>
-    <div class="carousel-slide" style="background-image:url('https://images.unsplash.com/photo-{ID3}?w=1600&q=80&auto=format')"></div>
-    <div class="carousel-slide" style="background-image:url('https://images.unsplash.com/photo-{ID4}?w=1600&q=80&auto=format')"></div>
-  </div>
-  <div class="hero-overlay"></div>
-  <div class="hero-content">
-    <p class="hero-eyebrow">eyebrow text</p>
-    <h1 class="hero-title">Main Headline</h1>
-    <p class="hero-subtitle">Supporting copy</p>
-    <div class="hero-cta"><a href="#" class="btn-primary">Primary CTA</a><a href="#" class="btn-secondary">Secondary CTA</a></div>
-  </div>
-  <button class="carousel-prev">&#8592;</button>
-  <button class="carousel-next">&#8594;</button>
-  <div class="carousel-dots"><span class="dot active"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
-</section>
-
-CSS: .hero { position:relative; min-height:calc(100vh); padding-top:70px; box-sizing:border-box; overflow:hidden; } .carousel-track { position:absolute; inset:0; } .carousel-slide { position:absolute; inset:0; background-size:cover; background-position:center; opacity:0; transition:opacity 1.2s ease-in-out; } .carousel-slide.active { opacity:1; } .hero-overlay { position:absolute; inset:0; background:linear-gradient(135deg,rgba(0,0,0,0.6) 0%,rgba(0,0,0,0.3) 100%); z-index:1; } .hero-content { position:relative; z-index:2; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:80px 2rem 60px; } .hero-cta { margin-bottom:20px; } .carousel-prev,.carousel-next { position:absolute; top:50%; transform:translateY(-50%); z-index:3; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.3); color:white; width:48px; height:48px; border-radius:50%; cursor:pointer; font-size:18px; backdrop-filter:blur(4px); transition:all 0.2s; } .carousel-prev { left:2rem; } .carousel-next { right:2rem; } .carousel-dots { position:absolute; bottom:2rem; left:50%; transform:translateX(-50%); display:flex; gap:8px; z-index:3; } .dot { width:8px; height:8px; border-radius:50%; background:rgba(255,255,255,0.4); cursor:pointer; transition:all 0.3s; } .dot.active { background:white; transform:scale(1.3); }
-
-JavaScript: Add a <script> block that auto-advances slides every 5 seconds, handles prev/next button clicks, updates dot indicators, pauses on hover, and resumes on mouseleave. Use 4 DIFFERENT Unsplash photo IDs relevant to the subject.`;
-    } else if (options.heroType === '3d') {
-      userMessage += `
-
-HERO SECTION REQUIREMENTS — 3D MOTION HERO:
-Build a stunning 3D animated hero using an HTML5 Canvas element with pure JavaScript. NO THREE.JS. NO EXTERNAL LIBRARIES. Everything must work in a single HTML file.
-
-Choose ONE canvas effect that best fits the brief's subject:
-- PARTICLE FIELD (tech/space/digital): hundreds of 3D particles connected by lines, mouse tilt effect
-- GEOMETRIC MORPHING (design/luxury/creative): rotating 3D wireframe polyhedron with glowing vertices
-- WAVE SURFACE (audio/nature/wellness): undulating 3D grid of points colored by wave height
-- DNA HELIX (science/health/bio): double helix of glowing spheres rotating in 3D space
-
-HTML structure:
-<section class="hero" id="hero">
-  <canvas id="hero3d" class="hero-canvas"></canvas>
-  <div class="hero-overlay"></div>
-  <div class="hero-content">
-    <p class="hero-eyebrow">tagline text</p>
-    <h1 class="hero-title">Main Headline</h1>
-    <p class="hero-subtitle">Supporting copy</p>
-    <div class="hero-cta"><a href="#" class="btn-primary">Primary CTA</a><a href="#" class="btn-secondary">Secondary CTA</a></div>
-  </div>
-</section>
-
-CSS: .hero { position:relative; min-height:calc(100vh); padding-top:70px; box-sizing:border-box; overflow:hidden; background:var(--color-bg,#050a15); } .hero-canvas { position:absolute; inset:0; width:100%; height:100%; } .hero-overlay { position:absolute; inset:0; background:radial-gradient(ellipse at center, transparent 20%, rgba(0,0,0,0.4) 100%); } .hero-content { position:relative; z-index:2; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:80px 2rem 60px; }
-
-JAVASCRIPT REQUIREMENTS: Write a COMPLETE working animation loop using requestAnimationFrame. For particle field example: const canvas=document.getElementById('hero3d'),ctx=canvas.getContext('2d'); let W,H,particles=[],mouse={x:0,y:0}; function resize(){W=canvas.width=canvas.offsetWidth;H=canvas.height=canvas.offsetHeight;} window.addEventListener('resize',resize); resize(); Create 150+ particles with x,y,z coordinates. Use perspective projection: scale=fov/(fov+z), screenX=W/2+x*scale, screenY=H/2+y*scale. Draw closer particles bigger and brighter. Connect particles within 100px with faint lines. Respond to mouse movement for camera tilt. Use requestAnimationFrame for 60fps. Colors MUST match the site's palette from the brief.
-
-CRITICAL ANIMATION LOOP REQUIREMENTS — the animation MUST loop forever using this exact pattern, never breaking after the first frame:
-let animationId = null;
-function animate() {
-  animationId = requestAnimationFrame(animate);
-  ctx.clearRect(0, 0, W, H);
-  // ... draw frame here ...
-}
-function startAnimation() {
-  try { animate(); } catch(e) { console.error('Animation error:', e); }
-}
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', startAnimation);
-} else {
-  startAnimation();
-}
-On resize, DO NOT cancel and restart the loop — only update dimensions:
-window.addEventListener('resize', () => {
-  W = canvas.width = canvas.offsetWidth;
-  H = canvas.height = canvas.offsetHeight;
-  // Do NOT call animate() again here — the loop is already running
-});
-NEVER call cancelAnimationFrame except when the page is hidden. Pause/resume with the Page Visibility API:
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    if (animationId) { cancelAnimationFrame(animationId); animationId = null; }
-  } else if (!animationId) {
-    startAnimation();
-  }
-});
-Write COMPLETE executable JavaScript — no pseudocode, no placeholders. The animation must actually run continuously and never silently stop.
-
-CRITICAL: Write COMPLETE executable JavaScript — no pseudocode, no placeholders. The animation must actually run.`;
-    }
-  }
-
-  // For iterations: append hero preserve instruction
-  if (previousHtml && options.heroType) {
-    const heroLabel = options.heroType === '3d' ? '3D canvas animation'
-      : options.heroType === 'carousel' ? 'image carousel'
-      : 'static background image';
-    userMessage += `\n\nPRESERVE THE HERO TYPE: The current hero uses the ${heroLabel} style. Keep this exact hero type and only change what was requested.`;
-  }
-
-  // Color theme injection
-  if (options.theme && options.theme.id !== 'auto') {
-    const t = options.theme.colors || {};
-    const customAcc = options.theme.customColor;
-
-    userMessage += `
-
-COLOR THEME — APPLY EXACTLY:
-Use these CSS custom properties throughout:
-:root {
-  --color-primary: ${t.primary || customAcc || '#6366f1'};
-  --color-accent: ${t.accent || customAcc || '#8b5cf6'};
-  --color-bg: ${t.bg || '#050a15'};
-  --color-surface: ${t.surface || '#0a1628'};
-  --color-text: ${t.text || '#e0f4ff'};
-}
-
-Apply these tokens to ALL elements — backgrounds, buttons, borders, headings, accent lines, hover states. The entire site must feel cohesive with this palette. Do NOT use colors outside this token system except for very subtle neutrals.
-`;
-  }
-
-  // Contact section injection
-  if (options.contact) {
-    const c = options.contact;
-    userMessage += `
-
-CONTACT SECTION — REQUIRED:
-Add a complete contact section before the footer with:
-
-${c.showForm ? `
-CONTACT FORM:
-<form class="contact-form">
-  <div class="form-row">
-    <input type="text" placeholder="Your Name" required>
-    <input type="email" placeholder="Email Address" required>
-  </div>
-  <input type="text" placeholder="Subject">
-  <textarea placeholder="Your message..." rows="5" required></textarea>
-  <button type="submit">Send Message</button>
-</form>
-Form must have styled inputs matching the site's color theme.
-` : ''}
-
-CONTACT DETAILS:
-${c.email ? `Email: ${c.email}` : ''}
-${c.phone ? `Phone: ${c.phone}` : ''}
-${c.address ? `Address: ${c.address}` : ''}
-
-Style with icons (use Unicode or CSS): 📧 for email, 📞 for phone, 📍 for address
-
-The section should have a heading like "Get In Touch" or "Contact Us" and use the site's accent color for highlights.
-`;
-  }
-
-  console.log('[WebGen] Calling Claude API (single pass, max_tokens=16000)...');
-
-  // ── Single-pass attempt ────────────────────────────────────────────────────
-  const result = await callClaudeForWebsite(userMessage, WEBSITE_SYSTEM_PROMPT, 16000);
-
-  // Diagnostic logging
-  console.log('[WebGen] === DIAGNOSTIC ===');
-  console.log('[WebGen] stop_reason:', result.stopReason);
-  console.log('[WebGen] usage:', result.usage);
-  console.log('[WebGen] Raw text length:', result.rawText.length);
-  console.log('[WebGen] Last 200 chars:', result.rawText.substring(result.rawText.length - 200));
-  console.log('[WebGen] Contains </html>:', result.rawText.toLowerCase().includes('</html>'));
-  console.log('[WebGen] Contains </body>:', result.rawText.toLowerCase().includes('</body>'));
-  console.log('[WebGen] === END DIAGNOSTIC ===');
-
-  const isComplete =
-    result.html.toLowerCase().includes('</html>') &&
-    result.stopReason !== 'max_tokens';
-
-  let finalHtml;
-
-  if (isComplete) {
-    console.log('[WebGen] Single pass complete.');
-    finalHtml = extractHtml(result.html);
-  } else {
-    // ── Two-pass fallback ──────────────────────────────────────────────────
-    console.warn(
-      '[WebGen] Single pass incomplete (stop_reason: ' + result.stopReason +
-      '), using two-pass generation'
-    );
-
-    const pass1Prompt = userMessage +
-      `\n\nGenerate this website in TWO PARTS.\n` +
-      `PART 1 (this response): Generate from <!DOCTYPE html> through the complete <head> section with all CSS, then the <body> opening, navigation, hero section, and about section. Do NOT close </body> or </html> yet — stop after the about section closes. This will be continued in part 2.`;
-
-    console.log('[WebGen] Starting pass 1...');
-    const pass1 = await callClaudeForWebsite(pass1Prompt, WEBSITE_SYSTEM_PROMPT, 16000);
-    console.log('[WebGen] Pass 1 stop_reason:', pass1.stopReason, '| length:', pass1.html.length);
-
-    const pass2Prompt =
-      `Here is PART 1 of a website (head, nav, hero, about):\n\n` +
-      `---PART 1---\n${pass1.html}\n---END PART 1---\n\n` +
-      `Original brief: ${userPrompt}\n\n` +
-      `Now generate PART 2 — the CONTINUATION: features/services section, gallery/showcase section with Unsplash images, testimonials section, call-to-action section, and footer. Then properly close </body></html>.\n\n` +
-      `Output ONLY the new HTML continuing from where part 1 left off — do not repeat part 1, do not include <!DOCTYPE html> or <head> again. Start directly with the next section's HTML (e.g. starting with <section...).`;
-
-    console.log('[WebGen] Starting pass 2...');
-    const pass2 = await callClaudeForWebsite(pass2Prompt, WEBSITE_SYSTEM_PROMPT, 16000);
-    console.log('[WebGen] Pass 2 stop_reason:', pass2.stopReason, '| length:', pass2.html.length);
-
-    // Combine: strip trailing closing tags from pass1, append pass2
-    let combined = pass1.html
-      .replace(/<\/body>\s*<\/html>\s*$/i, '')
-      .replace(/<\/html>\s*$/i, '');
-
-    let pass2Clean = pass2.html
-      .replace(/^```html?\s*/i, '')
+// Splits a "=== FILE: path ===\n<code>" formatted response into a { path: code } map
+function extractFileBlocks(raw) {
+  const files = {};
+  const re = /===\s*FILE:\s*([^\s=]+)\s*===\s*([\s\S]*?)(?=(?:===\s*FILE:)|$)/g;
+  let m;
+  while ((m = re.exec(raw))) {
+    const filePath = m[1].trim();
+    const content = m[2].trim()
+      .replace(/^```[a-z]*\s*/i, '')
       .replace(/```\s*$/i, '')
       .trim();
+    files[filePath] = content;
+  }
+  return files;
+}
 
-    combined = combined + '\n' + pass2Clean;
+// ── Section type + component file naming ───────────────────────────────────────
 
-    if (!combined.toLowerCase().includes('</body>')) combined += '\n</body>';
-    if (!combined.toLowerCase().includes('</html>')) combined += '\n</html>';
+const SECTION_COMPONENT_NAMES = {
+  about:        'About',
+  features:     'Features',
+  gallery:      'Gallery',
+  testimonials: 'Testimonials',
+  cta:          'Cta',
+  contact:      'Contact',
+};
 
-    finalHtml = extractHtml(combined);
-    console.log('[WebGen] Two-pass combined length:', finalHtml.length);
+function componentFileName(type) {
+  return SECTION_COMPONENT_NAMES[type];
+}
+
+function determineSectionTypes(options) {
+  const types = ['about', 'features', 'gallery', 'testimonials', 'cta'];
+  if (options.contact) types.push('contact');
+  return types;
+}
+
+const COMPONENT_PROP_SPECS = {
+  Nav:          `{ logoText, links: [{ label, href }], cta: { label, href } }`,
+  Hero:         `{ type: "static"|"carousel"|"3d", eyebrow, title, subtitle, ctas: [{ label, href, variant }], images: [{ url, alt }], canvasEffect }`,
+  Footer:       `{ brandBlurb, columns: [{ title, links: [{ label, href }] }], social: [{ platform, href }], copyright }`,
+  About:        `{ heading, body, image: { url, alt } }`,
+  Features:     `{ heading, items: [{ id, icon, title, description }] }`,
+  Gallery:      `{ heading, images: [{ id, url, alt }] }`,
+  Testimonials: `{ heading, items: [{ id, quote, name, role }] }`,
+  Cta:          `{ heading, subtext, button: { label, href } }`,
+  Contact:      `{ heading, showForm, email, phone, address }`,
+};
+
+// ── PASS 1 — design brief ───────────────────────────────────────────────────────
+
+const DESIGN_BRIEF_SYSTEM = `You are a senior brand and frontend designer. Given a website brief, decide the visual direction.
+
+Ground every choice in the brief's own subject, audience, and vocabulary — never default to generic startup aesthetics.
+
+AVOID THESE OVERUSED AI DEFAULTS unless the brief specifically calls for one:
+(1) cream background + serif + terracotta accent
+(2) near-black + single acid-green/vermilion accent
+(3) newspaper-style hairline-rule columns
+
+Output ONLY a single JSON object, no markdown fences, no commentary, matching exactly:
+{
+  "palette": { "primary": "#hex", "accent": "#hex", "bg": "#hex", "surface": "#hex", "text": "#hex" },
+  "fonts": { "heading": "Google Font Name", "body": "Google Font Name", "googleFontsUrl": "https://fonts.googleapis.com/css2?family=...&display=swap" },
+  "motion": "one short sentence describing the animation/motion approach",
+  "canvasEffect": "particles" | "geometric" | "wave" | "helix" | null,
+  "industry": "detected industry or category",
+  "voice": "one short sentence describing the copy tone",
+  "styleKeywords": ["4-8 lowercase single-word adjectives capturing the visual mood, e.g. dark, premium, minimal, playful"]
+}`;
+
+async function generateDesignBrief(userPrompt, options) {
+  const forcedColors = !!(options.theme && options.theme.id !== 'auto');
+  // No hero type picked (or "auto") means the app auto-selects a hero after the brief
+  const heroType = !options.heroType || options.heroType === 'auto'
+    ? 'auto'
+    : (options.heroType === 'normal' ? 'static' : options.heroType);
+
+  let msg = `BRIEF: ${userPrompt}\n\n` +
+    `STYLE: ${options.style || 'Premium, distinctive, memorable'}\n` +
+    `INDUSTRY: ${options.industry || 'Detect from brief'}\n`;
+
+  if (forcedColors) {
+    const t = options.theme.colors || {};
+    const acc = options.theme.customColor;
+    msg += `\nCOLORS ARE FIXED — use exactly these in the "palette" field, do not change them:\n` +
+      `primary: ${t.primary || acc}, accent: ${t.accent || acc}, bg: ${t.bg}, surface: ${t.surface}, text: ${t.text}\n`;
+  } else if (options.colors) {
+    msg += `\nCOLOR DIRECTION: ${options.colors}\n`;
   }
 
-  // Final sanity check
-  if (!finalHtml.toLowerCase().includes('<html') || !finalHtml.toLowerCase().includes('<body')) {
-    console.error('[WebGen] Invalid HTML preview:', finalHtml.substring(0, 200));
-    throw new Error('Generated content is not valid HTML. Please try again with a more specific prompt.');
-  }
-
-  // Ensure closing tags exist
-  if (!finalHtml.toLowerCase().includes('</html>')) {
-    const lastBody = finalHtml.toLowerCase().lastIndexOf('</body>');
-    if (lastBody > 0) {
-      finalHtml = finalHtml.substring(0, lastBody + 7) + '\n</html>';
+  if (heroType === 'auto') {
+    msg += `\nHERO TYPE: automatic — after this brief the app deterministically picks either a prebuilt library hero or a static hero. Set "canvasEffect" to null.`;
+  } else {
+    msg += `\nHERO TYPE IS FIXED to "${heroType}". `;
+    if (heroType === '3d') {
+      msg += `Choose the best "canvasEffect" for this subject.`;
+    } else if (heroType === 'library') {
+      msg += `A prebuilt hero component will be used, themed by your palette — set "canvasEffect" to null.`;
     } else {
-      finalHtml += '\n</body>\n</html>';
+      msg += `Set "canvasEffect" to null.`;
     }
   }
 
-  console.log('[WebGen] Final HTML length:', finalHtml.length, 'chars');
-  return finalHtml;
+  const { rawText } = await callClaudeAPI(msg, DESIGN_BRIEF_SYSTEM, 700);
+  const brief = extractJson(rawText);
+
+  if (forcedColors) {
+    const t = options.theme.colors || {};
+    const acc = options.theme.customColor;
+    brief.palette = {
+      primary: t.primary || acc || brief.palette.primary,
+      accent:  t.accent  || acc || brief.palette.accent,
+      bg:      t.bg      || brief.palette.bg,
+      surface: t.surface || brief.palette.surface,
+      text:    t.text    || brief.palette.text,
+    };
+  }
+
+  brief.styleKeywords = Array.isArray(brief.styleKeywords)
+    ? brief.styleKeywords.map((k) => String(k).toLowerCase().trim()).filter(Boolean)
+    : [];
+
+  brief.heroType = heroType;
+  return brief;
+}
+
+// ── Auto hero selection (deterministic scoring — no model call) ────────────────
+// When heroType is "auto", the design brief's derived mood/style is matched against
+// each catalog hero's mood[]/styleTags[]. Scoring:
+//   +3  per hero mood[] word present in the brief's token set
+//   +2  per hero styleTags[] word present in the brief's token set
+//   +2  if the hero declares the same dark/light polarity as the palette background
+//   -4  if it declares the opposite polarity
+//   +1  if the hero is tagged "adaptive" (works on light or dark)
+// Brief tokens = styleKeywords + words from voice/motion/industry, with both sides run
+// through a small synonym map (e.g. "luxurious" -> "premium") so phrasing differences
+// still match. Highest score wins; catalog order breaks ties. If no hero reaches
+// AUTO_SELECT_THRESHOLD the generator falls back to the default static hero.
+
+export const AUTO_SELECT_THRESHOLD = 3;
+
+const TOKEN_SYNONYMS = {
+  luxurious: 'premium', luxury: 'premium', upscale: 'premium', 'high-end': 'premium', exclusive: 'premium',
+  'sci-fi': 'futuristic', tech: 'futuristic', technological: 'futuristic', cyber: 'futuristic',
+  minimalist: 'minimal', simple: 'minimal', understated: 'minimal', crisp: 'minimal',
+  strong: 'bold', punchy: 'bold', striking: 'bold', loud: 'bold',
+  refined: 'elegant', sophisticated: 'elegant', graceful: 'elegant', classy: 'elegant',
+  contemporary: 'modern', polished: 'sleek', smooth: 'sleek',
+  cinematic: 'dramatic', moody: 'dramatic', intense: 'dramatic',
+  upbeat: 'optimistic', energetic: 'optimistic', vibrant: 'optimistic', bright: 'optimistic',
+  assured: 'confident', authoritative: 'confident', professional: 'confident',
+};
+
+function normalizeToken(word) {
+  const w = String(word).toLowerCase();
+  return TOKEN_SYNONYMS[w] || w;
+}
+
+function hexLuminance(hex) {
+  const clean = String(hex || '').replace('#', '');
+  const full = clean.length === 3 ? clean.split('').map((c) => c + c).join('') : clean;
+  const n = parseInt(full, 16);
+  if (Number.isNaN(n)) return 1;
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
+
+export function deriveBriefTokens(brief) {
+  const raw = [
+    ...(brief.styleKeywords || []),
+    ...String(brief.voice || '').split(/[^a-zA-Z0-9-]+/),
+    ...String(brief.motion || '').split(/[^a-zA-Z0-9-]+/),
+    ...String(brief.industry || '').split(/[^a-zA-Z0-9-]+/),
+  ];
+  const tokens = new Set(raw.map(normalizeToken).filter((w) => w.length > 2));
+  const polarity = hexLuminance(brief.palette?.bg) < 0.35 ? 'dark' : 'light';
+  return { tokens, polarity };
+}
+
+export function autoSelectHero(brief) {
+  const { tokens, polarity } = deriveBriefTokens(brief);
+  let best = null;
+
+  for (const hero of listHeroes()) {
+    let score = 0;
+    const matched = [];
+
+    for (const mood of hero.mood || []) {
+      if (tokens.has(normalizeToken(mood))) { score += 3; matched.push(`mood "${mood}"`); }
+    }
+    for (const tag of hero.styleTags || []) {
+      const t = normalizeToken(tag);
+      if (t === 'dark' || t === 'light') {
+        if (t === polarity) { score += 2; matched.push(`${t} palette`); }
+        else { score -= 4; }
+      } else if (t === 'adaptive') {
+        score += 1; matched.push('adaptive');
+      } else if (tokens.has(t)) {
+        score += 2; matched.push(`tag "${tag}"`);
+      }
+    }
+
+    if (!best || score > best.score) best = { slug: hero.slug, score, matched };
+  }
+
+  if (best && best.score >= AUTO_SELECT_THRESHOLD) {
+    return {
+      slug:   best.slug,
+      score:  best.score,
+      reason: `auto-matched ${best.matched.join(', ')} (score ${best.score} >= ${AUTO_SELECT_THRESHOLD})`,
+    };
+  }
+  return {
+    slug:   null,
+    score:  best ? best.score : 0,
+    reason: best
+      ? `best candidate "${best.slug}" scored ${best.score} < ${AUTO_SELECT_THRESHOLD} — falling back to static hero`
+      : 'hero library catalog is empty — falling back to static hero',
+  };
+}
+
+// ── PASS 2 — deterministic scaffold (no model call) ────────────────────────────
+
+export function buildScaffoldFiles() {
+  const files = {};
+
+  files['package.json'] = JSON.stringify({
+    name:    'generated-site',
+    version: '0.1.0',
+    private: true,
+    // Pinned versions: a known-good Next 14.2 + React 18.3 + Tailwind v3 combo.
+    // 'next start' is invalid with output:'export' (Next 14 errors), so start
+    // serves the built out/ folder instead. No lint script — eslint isn't shipped.
+    scripts: { dev: 'next dev', build: 'next build', start: 'npx serve out' },
+    dependencies: {
+      next:        '14.2.35',
+      react:       '18.3.1',
+      'react-dom': '18.3.1',
+    },
+    devDependencies: {
+      autoprefixer: '10.4.20',
+      postcss:      '8.4.47',
+      tailwindcss:  '3.4.13',
+    },
+  }, null, 2);
+
+  files['next.config.js'] =
+`/** @type {import('next').NextConfig} */
+const nextConfig = {
+  output: 'export',
+  images: { unoptimized: true },
+};
+
+module.exports = nextConfig;
+`;
+
+  files['postcss.config.js'] =
+`module.exports = {
+  plugins: { tailwindcss: {}, autoprefixer: {} },
+};
+`;
+
+  // Semantic color/font names map to CSS custom properties injected by app/layout.jsx
+  // from content/site.json — this file never contains a hex code or font name.
+  files['tailwind.config.js'] =
+`/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: ['./app/**/*.{js,jsx}', './components/**/*.{js,jsx}'],
+  theme: {
+    extend: {
+      colors: {
+        primary: 'rgb(var(--color-primary) / <alpha-value>)',
+        accent:  'rgb(var(--color-accent) / <alpha-value>)',
+        bg:      'rgb(var(--color-bg) / <alpha-value>)',
+        surface: 'rgb(var(--color-surface) / <alpha-value>)',
+        text:    'rgb(var(--color-text) / <alpha-value>)',
+      },
+      fontFamily: {
+        heading: ['var(--font-heading)', 'sans-serif'],
+        body:    ['var(--font-body)', 'sans-serif'],
+      },
+    },
+  },
+  plugins: [],
+};
+`;
+
+  files['app/globals.css'] =
+`@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: rgb(var(--color-bg));
+  color: rgb(var(--color-text));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+`;
+
+  files['app/layout.jsx'] =
+`// Root layout — injects theme tokens from content/site.json as CSS variables so
+// editing site.json + rebuilding re-themes the whole site with no code changes.
+import './globals.css';
+import site from '../content/site.json';
+
+function hexToRgbChannels(hex) {
+  const clean = (hex || '#000000').replace('#', '');
+  const full = clean.length === 3 ? clean.split('').map((c) => c + c).join('') : clean;
+  const bigint = parseInt(full, 16);
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return \`\${r} \${g} \${b}\`;
+}
+
+export const metadata = {
+  title: site.meta.title,
+  description: site.meta.description,
+  openGraph: {
+    title: site.meta.title,
+    description: site.meta.description,
+    siteName: site.meta.siteName,
+    images: site.meta.ogImage ? [site.meta.ogImage] : [],
+  },
+};
+
+export default function RootLayout({ children }) {
+  const { colors, fonts } = site.theme;
+
+  const themeVars = \`:root {
+    --color-primary: \${hexToRgbChannels(colors.primary)};
+    --color-accent: \${hexToRgbChannels(colors.accent)};
+    --color-bg: \${hexToRgbChannels(colors.bg)};
+    --color-surface: \${hexToRgbChannels(colors.surface)};
+    --color-text: \${hexToRgbChannels(colors.text)};
+    --font-heading: '\${fonts.heading}', sans-serif;
+    --font-body: '\${fonts.body}', sans-serif;
+  }\`;
+
+  const jsonLd = {
+    '@context':   'https://schema.org',
+    '@type':      'Organization',
+    name:         site.meta.siteName,
+    description: site.meta.description,
+  };
+
+  return (
+    <html lang={(site.meta.locale || 'en_US').split('_')[0]}>
+      <head>
+        <link rel="stylesheet" href={fonts.googleFontsUrl} />
+        <style dangerouslySetInnerHTML={{ __html: themeVars }} />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        />
+      </head>
+      <body className="font-body">{children}</body>
+    </html>
+  );
+}
+`;
+
+  files['public/robots.txt'] =
+`User-agent: *
+Allow: /
+
+Sitemap: /sitemap.xml
+`;
+
+  files['public/sitemap.xml'] =
+`<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>/</loc>
+    <changefreq>monthly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>
+`;
+
+  files['README.md'] =
+`# Generated Site
+
+Built by Taski's AI website generator (Next.js App Router, static export).
+
+## Develop
+\`\`\`bash
+npm install
+npm run dev
+\`\`\`
+
+## Build static export
+\`\`\`bash
+npm run build
+\`\`\`
+Output goes to \`out/\`. Deploy that folder to any static host.
+
+## Preview the built site locally
+\`\`\`bash
+npm run start
+\`\`\`
+(\`next start\` does not work with static export — this serves \`out/\` with the
+\`serve\` package instead.)
+
+## Edit content
+All copy lives in \`content/site.json\`, \`content/hero.json\`, and \`content/sections.json\`.
+Edit those and rebuild — no component changes are needed for copy or theme edits.
+`;
+
+  return files;
+}
+
+// ── PASS 3 — section components ─────────────────────────────────────────────────
+
+// Hero implementation rules, shared by initial generation and iterate-mode hero swaps
+const HERO_3D_RULES = `'use client'; requestAnimationFrame loop that never stops except via the Page Visibility API (cancel on document.hidden, restart when visible again); on window resize only update canvas dimensions, never cancel/restart the loop; wrap the animate() call in try/catch so one bad frame can't kill the loop`;
+const HERO_CAROUSEL_RULES = `'use client'; auto-advance every 5s via setInterval in useEffect (cleared on unmount), pause on mouseenter/resume on mouseleave, prev/next buttons and dot navigation update the same state`;
+const HERO_STATIC_RULES = `full-viewport static hero using data.images[0] as an <img> background with a gradient overlay for text contrast`;
+
+const COMPONENT_SYSTEM = `You are an elite frontend engineer building React components for a Next.js 14 App Router static-export site.
+
+HARD TECHNICAL RULES:
+- Plain functional components, plain JavaScript (.jsx), no TypeScript.
+- Use <img> and <a> directly — NEVER next/image or next/link (this must also run in a dependency-free live preview with no bundler).
+- NO external npm UI/animation libraries (no lucide-react, no framer-motion, no icon packages). Icons are inline <svg>.
+- Use ONLY Tailwind utility classes, using these semantic classes which map to CSS variables: bg-bg, bg-surface, bg-primary, bg-accent, text-text, text-primary, text-accent, border-primary (opacity variants like bg-primary/10 work). Font classes: font-heading (headings), font-body (body text, default).
+- Mark a component 'use client' at the top ONLY if it needs interactivity (state, effects, event handlers, canvas). Otherwise leave it a server component with no directive.
+- Each component receives its data via a single \`data\` prop (an object) — never import content JSON directly inside a component, and never hardcode copy text.
+- Motion: CSS transitions/keyframes and IntersectionObserver-driven scroll reveals only — no animation libraries.
+- Mobile responsive (test 768px/480px breakpoints mentally).
+- Respect prefers-reduced-motion.
+
+OUTPUT FORMAT — this is critical:
+For each file, output a marker line, then the raw code, with no markdown fences:
+=== FILE: components/Name.jsx ===
+<code>
+
+Output every requested file, back to back, nothing else before or after.`;
+
+async function generateComponents(userPrompt, brief, sectionTypes) {
+  // Library heroes come from src/lib/heroLibrary, not model generation — skip Hero
+  const names = brief.heroType === 'library'
+    ? ['Nav', ...sectionTypes.map(componentFileName), 'Footer']
+    : ['Nav', 'Hero', ...sectionTypes.map(componentFileName), 'Footer'];
+
+  let msg = `BRIEF: ${userPrompt}\n\nDESIGN DIRECTION:\n` +
+    `Palette: ${JSON.stringify(brief.palette)}\n` +
+    `Fonts: ${brief.fonts.heading} (headings), ${brief.fonts.body} (body)\n` +
+    `Motion: ${brief.motion}\n` +
+    `Voice: ${brief.voice}\n` +
+    `Hero type: ${brief.heroType}${brief.heroType === '3d' ? ' (canvas effect: ' + brief.canvasEffect + ')' : ''}\n\n` +
+    `Generate exactly these component files, each consuming the documented \`data\` prop shape:\n\n`;
+
+  for (const name of names) {
+    msg += `components/${name}.jsx — data shape: ${COMPONENT_PROP_SPECS[name]}\n`;
+  }
+
+  if (brief.heroType === '3d') {
+    msg += `\nHero.jsx 3D canvas rules: ${HERO_3D_RULES}.\n`;
+  }
+  if (brief.heroType === 'carousel') {
+    msg += `\nHero.jsx carousel rules: ${HERO_CAROUSEL_RULES}.\n`;
+  }
+
+  const { rawText, stopReason } = await callClaudeAPI(msg, COMPONENT_SYSTEM, 16000);
+  const files = extractFileBlocks(rawText);
+
+  const missing = names.filter((n) => !files['components/' + n + '.jsx']);
+  if (missing.length) {
+    throw new Error(
+      'Component generation incomplete, missing: ' + missing.join(', ') +
+      (stopReason === 'max_tokens' ? ' (hit max_tokens)' : '')
+    );
+  }
+
+  return files;
+}
+
+// ── PASS 4 — content JSON ───────────────────────────────────────────────────────
+
+const CONTENT_SYSTEM = `You write real, compelling website copy — no lorem ipsum, no placeholders — matching a given design brief and brand voice.
+
+Output ONLY a single JSON object, no markdown fences, no commentary, matching EXACTLY this shape:
+{
+  "site": {
+    "meta": { "title": "", "description": "", "ogImage": "", "siteName": "", "locale": "en_US" },
+    "nav": { "logoText": "", "links": [{ "label": "", "href": "#" }], "cta": { "label": "", "href": "#" } },
+    "footer": { "brandBlurb": "", "columns": [{ "title": "", "links": [{ "label": "", "href": "#" }] }], "social": [{ "platform": "", "href": "#" }], "copyright": "" }
+  },
+  "hero": { "eyebrow": "", "title": "", "subtitle": "", "ctas": [{ "label": "", "href": "#", "variant": "primary|secondary" }], "images": [{ "url": "", "alt": "" }] },
+  "sections": {
+    "sections": [
+      { "id": "about", "type": "about", "data": { "heading": "", "body": "", "image": { "url": "", "alt": "" } } },
+      { "id": "features", "type": "features", "data": { "heading": "", "items": [{ "id": "", "icon": "", "title": "", "description": "" }] } },
+      { "id": "gallery", "type": "gallery", "data": { "heading": "", "images": [{ "id": "", "url": "", "alt": "" }] } },
+      { "id": "testimonials", "type": "testimonials", "data": { "heading": "", "items": [{ "id": "", "quote": "", "name": "", "role": "" }] } },
+      { "id": "cta", "type": "cta", "data": { "heading": "", "subtext": "", "button": { "label": "", "href": "#" } } },
+      { "id": "contact", "type": "contact", "data": { "heading": "", "showForm": true, "email": "", "phone": "", "address": "" } }
+    ]
+  }
+}
+
+Emit one section object per requested section type ONLY — e.g. include the "contact" object only when "contact" is in the requested list. Every section's "data" must match the shape shown above for its type exactly.
+
+Real images MUST use this exact Unsplash pattern: https://images.unsplash.com/photo-{ID}?w=1200&q=80&auto=format&fit=crop — pick photo IDs matching the subject, vary them (never repeat one ID twice). Use 4-8 total across the whole site. All hrefs are "#". sections.sections order matters — it is the literal render order on the page. Every repeated item (features/testimonials/gallery entries) needs a short unique "id".`;
+
+async function generateContent(userPrompt, brief, sectionTypes, options) {
+  let msg = `BRIEF: ${userPrompt}\n\nVoice: ${brief.voice}\nIndustry: ${brief.industry}\n\n` +
+    `Include exactly these section types, in this order, inside sections.sections: ${sectionTypes.join(', ')}.\n` +
+    `Fonts and colors are already decided elsewhere — just write copy, do not include theme fields.\n`;
+
+  if (options.contact) {
+    const c = options.contact;
+    msg += `\nContact section details to use verbatim: email="${c.email || ''}", phone="${c.phone || ''}", address="${c.address || ''}", showForm=${!!c.showForm}.\n`;
+  }
+
+  const { rawText } = await callClaudeAPI(msg, CONTENT_SYSTEM, 4000);
+  const parsed = extractJson(rawText);
+
+  parsed.site.theme = { colors: brief.palette, fonts: brief.fonts };
+  parsed.hero.type = brief.heroType;
+  if (brief.heroType === '3d') parsed.hero.canvasEffect = brief.canvasEffect;
+  if (brief.heroType === 'library') parsed.hero.librarySlug = brief.librarySlug;
+
+  return parsed; // { site, hero, sections }
+}
+
+// ── Library heroes (deterministic, no model call) ──────────────────────────────
+// When content/hero.json is { "type": "library", "librarySlug": "<slug>", ... },
+// the hero component comes from src/lib/heroLibrary instead of model generation:
+// its raw source is written to components/heroes/<Name>.jsx and Hero.jsx becomes
+// a thin wrapper, so app/page.jsx keeps rendering <Hero data={heroContent} />.
+
+export function buildLibraryHeroFiles(librarySlug) {
+  const hero = getHero(librarySlug);
+  if (!hero) throw new Error(`Hero "${librarySlug}" not found in the hero library catalog`);
+
+  const name = heroComponentName(librarySlug);
+  return {
+    [`components/heroes/${name}.jsx`]: hero.source,
+    'components/Hero.jsx':
+`// Hero.jsx — renders the "${librarySlug}" hero from the curated hero library (see content/hero.json)
+import ${name} from './heroes/${name}';
+
+export default function Hero({ data }) {
+  return <${name} data={data} />;
+}
+`,
+  };
+}
+
+// ── page.jsx assembly (deterministic) ───────────────────────────────────────────
+
+function knownSectionTypes(types) {
+  return types.filter((t) => componentFileName(t));
+}
+
+export function buildPageFile(sectionTypes) {
+  const known = knownSectionTypes(sectionTypes);
+  const names = ['Nav', 'Hero', ...known.map(componentFileName), 'Footer'];
+  const imports = names.map((n) => `import ${n} from '../components/${n}';`).join('\n');
+  const componentMap = known.map((t) => `  ${t}: ${componentFileName(t)},`).join('\n');
+
+  return `import site from '../content/site.json';
+import heroContent from '../content/hero.json';
+import sectionsContent from '../content/sections.json';
+${imports}
+
+const SECTION_COMPONENTS = {
+${componentMap}
+};
+
+export default function Home() {
+  return (
+    <>
+      <Nav data={site.nav} />
+      <Hero data={heroContent} />
+      {sectionsContent.sections.map((section) => {
+        const Component = SECTION_COMPONENTS[section.type];
+        if (!Component) return null;
+        return <Component key={section.id} data={section.data} />;
+      })}
+      <Footer data={site.footer} />
+    </>
+  );
+}
+`;
+}
+
+// ── Iterate — patches an existing project instead of regenerating it ──────────
+// contentPatch is deep-merged into the existing content JSON: objects merge
+// key-by-key, arrays REPLACE the existing array wholesale (so a patch that
+// touches "sections" must include the full sections array it wants).
+
+function deepMergePatch(target, patch) {
+  if (Array.isArray(patch)) return patch;
+  if (patch && typeof patch === 'object') {
+    const base = target && typeof target === 'object' && !Array.isArray(target) ? target : {};
+    const result = { ...base };
+    for (const key of Object.keys(patch)) {
+      result[key] = deepMergePatch(base[key], patch[key]);
+    }
+    return result;
+  }
+  return patch;
+}
+
+const ITERATE_SYSTEM = `You are iterating on an existing generated Next.js site. You will be given the current content JSON, the list of existing component files, and an update request.
+
+Respond with ONLY a single JSON object, no markdown fences:
+{
+  "contentPatch": { "site": {}, "hero": {}, "sections": {} },
+  "filePatches": [ { "path": "components/Name.jsx", "content": "...full replacement file contents..." } ]
+}
+
+Rules:
+- Only include keys that actually change in contentPatch — it will be deep-merged into the existing JSON (objects merge key-by-key, arrays REPLACE the existing array wholesale, so if you touch "sections" you must include the FULL sections array as you want it to end up, not just the changed item).
+- Only include filePatches for components that need structural/visual code changes. Pure copy/color/font edits should go through contentPatch only, with an empty filePatches array — do NOT rewrite component code for a copy-only change.
+- filePatches content must follow the same technical rules as original generation: plain <img>/<a>, no external UI libraries, semantic Tailwind color/font classes (bg-primary, text-text, font-heading, etc.), 'use client' only where interactive.`;
+
+async function iterateWebsite(userPrompt, options, previousProject) {
+  const { files, meta } = previousProject;
+
+  const currentContent = {
+    site:     JSON.parse(files['content/site.json']),
+    hero:     JSON.parse(files['content/hero.json']),
+    sections: JSON.parse(files['content/sections.json']),
+  };
+
+  const componentPaths = Object.keys(files).filter((p) => p.startsWith('components/'));
+
+  let msg = `CURRENT CONTENT JSON:\n${JSON.stringify(currentContent, null, 2)}\n\n` +
+    `EXISTING COMPONENT FILES: ${componentPaths.join(', ')}\n\n` +
+    `UPDATE REQUESTED: "${userPrompt}"\n\n` +
+    `Design tokens currently in use — preserve unless the request asks to change them: palette ${JSON.stringify(meta.brief.palette)}, fonts ${meta.brief.fonts.heading}/${meta.brief.fonts.body}.` +
+    (options.contact ? `\nContact details: email="${options.contact.email || ''}", phone="${options.contact.phone || ''}", address="${options.contact.address || ''}".` : '');
+
+  // Hero swap requested from the panel (type or library slug changed since generation).
+  // Library swaps are fully deterministic (applied below, after the merge); non-library
+  // swaps need the model to deliver a replacement Hero.jsx via filePatches.
+  const heroChange = options.heroChange || null;
+  if (heroChange) {
+    if (heroChange.type === 'library') {
+      msg += `\n\nHERO SWAP (handled by the app, not you): the hero is being replaced with the prebuilt library component "${heroChange.librarySlug}". Do NOT patch components/Hero.jsx or anything under components/heroes/, and do not change hero "type" or "librarySlug" in contentPatch. Only update hero copy fields (eyebrow/title/subtitle/ctas) if the update request itself asks for copy changes.`;
+    } else {
+      const rules = heroChange.type === '3d' ? HERO_3D_RULES
+        : heroChange.type === 'carousel' ? HERO_CAROUSEL_RULES
+        : HERO_STATIC_RULES;
+      msg += `\n\nHERO CHANGE REQUIRED: replace the hero with a "${heroChange.type}" hero. Include a filePatch containing the FULL new components/Hero.jsx (same single \`data\` prop; ${rules}). Do not change hero "type" in contentPatch — the app sets it.`;
+    }
+  }
+
+  const { rawText } = await callClaudeAPI(msg, ITERATE_SYSTEM, 8000);
+  const { contentPatch = {}, filePatches = [] } = extractJson(rawText);
+
+  const mergedContent = {
+    site:     deepMergePatch(currentContent.site, contentPatch.site || {}),
+    hero:     deepMergePatch(currentContent.hero, contentPatch.hero || {}),
+    sections: deepMergePatch(currentContent.sections, contentPatch.sections || {}),
+  };
+
+  // Apply the panel's hero swap deterministically — it wins over anything the model
+  // may have put in contentPatch.hero.
+  if (heroChange) {
+    if (heroChange.type === 'library') {
+      mergedContent.hero.type = 'library';
+      mergedContent.hero.librarySlug = heroChange.librarySlug;
+      delete mergedContent.hero.canvasEffect;
+    } else {
+      mergedContent.hero.type = heroChange.type;
+      delete mergedContent.hero.librarySlug;
+      if (heroChange.type === '3d') mergedContent.hero.canvasEffect = mergedContent.hero.canvasEffect || 'particles';
+      else delete mergedContent.hero.canvasEffect;
+    }
+  }
+
+  const newFiles = { ...files };
+  newFiles['content/site.json']     = JSON.stringify(mergedContent.site, null, 2);
+  newFiles['content/hero.json']     = JSON.stringify(mergedContent.hero, null, 2);
+  newFiles['content/sections.json'] = JSON.stringify(mergedContent.sections, null, 2);
+
+  for (const patch of filePatches) {
+    if (patch?.path && typeof patch.content === 'string') {
+      newFiles[patch.path] = patch.content;
+    }
+  }
+
+  // Library heroes are canonical: re-apply from the library so Hero.jsx and
+  // components/heroes/ stay in sync with hero.json (e.g. slug changed via patch).
+  if (mergedContent.hero.type === 'library' && mergedContent.hero.librarySlug) {
+    Object.assign(newFiles, buildLibraryHeroFiles(mergedContent.hero.librarySlug));
+  }
+
+  // Switching away from a library hero: drop the now-unused heroes/ sources, but only
+  // once a replacement Hero.jsx arrived that no longer references them (otherwise the
+  // stale wrapper would import a deleted file).
+  if (mergedContent.hero.type !== 'library' &&
+      typeof newFiles['components/Hero.jsx'] === 'string' &&
+      !newFiles['components/Hero.jsx'].includes('./heroes/')) {
+    for (const p of Object.keys(newFiles)) {
+      if (p.startsWith('components/heroes/')) delete newFiles[p];
+    }
+  }
+
+  const orderedTypes = (mergedContent.sections.sections || []).map((s) => s.type);
+  const uniqueTypes = [...new Set(orderedTypes)];
+  newFiles['app/page.jsx'] = buildPageFile(uniqueTypes);
+
+  return {
+    files: newFiles,
+    meta:  { ...meta, sectionTypes: knownSectionTypes(uniqueTypes), heroType: mergedContent.hero.type },
+  };
+}
+
+// ── Post-generation self-check ──────────────────────────────────────────────────
+// Lightweight validation of the emitted files map. Returns human-readable
+// warnings (empty array = clean); never throws, since a flawed project may
+// still preview fine and the user can regenerate.
+
+const IMPORT_SPEC_RE = /^import\s+(?:[^'"]*?from\s+)?['"]([^'"]+)['"]/gm;
+
+export function runSelfCheck(files) {
+  const warnings = [];
+
+  for (const [path, content] of Object.entries(files)) {
+    if (typeof content !== 'string' || !content.trim()) {
+      warnings.push(`${path} is empty`);
+      continue;
+    }
+
+    if (path === 'package.json' || (path.startsWith('content/') && path.endsWith('.json'))) {
+      try {
+        JSON.parse(content);
+      } catch (e) {
+        warnings.push(`${path} is not valid JSON: ${e.message}`);
+      }
+    }
+
+    if (path.endsWith('.jsx') && !/export\s+default/.test(content)) {
+      warnings.push(`${path} has no default export`);
+    }
+
+    // Generated components must be dependency-free: react and relative imports only
+    // (no next/image, next/link, next/font, or third-party packages).
+    if (path.startsWith('components/') && path.endsWith('.jsx')) {
+      for (const m of content.matchAll(IMPORT_SPEC_RE)) {
+        const spec = m[1];
+        if (spec !== 'react' && !spec.startsWith('.')) {
+          warnings.push(`${path} imports "${spec}" — components must only import react or relative files`);
+        }
+      }
+    }
+  }
+
+  // Library hero: hero.json declaring type "library" must reference a slug that exists
+  // in the catalog AND have its component in the map (the generic .jsx checks above
+  // then cover non-empty + default export).
+  try {
+    const hero = JSON.parse(files['content/hero.json'] || 'null');
+    if (hero && hero.type === 'library') {
+      if (!hero.librarySlug) {
+        warnings.push('content/hero.json is type "library" but has no librarySlug');
+      } else if (!getHero(hero.librarySlug)) {
+        warnings.push(`library hero "${hero.librarySlug}" is not in the hero library catalog (or its source file is missing)`);
+      } else {
+        const heroPath = `components/heroes/${heroComponentName(hero.librarySlug)}.jsx`;
+        if (!files[heroPath]) warnings.push(`${heroPath} is missing for library hero "${hero.librarySlug}"`);
+      }
+    } else if (hero && hero.type &&
+               typeof files['components/Hero.jsx'] === 'string' &&
+               files['components/Hero.jsx'].includes('./heroes/')) {
+      warnings.push(`components/Hero.jsx still renders a library hero but content/hero.json is type "${hero.type}"`);
+    }
+  } catch { /* invalid hero.json is already reported by the JSON check above */ }
+
+  return warnings;
+}
+
+// ── Main entry point ────────────────────────────────────────────────────────────
+
+export async function generateWebsite(userPrompt, options = {}, previousProject = null) {
+  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error('VITE_ANTHROPIC_API_KEY is not set. Add it to your .env file.');
+
+  if (previousProject) {
+    console.log('[WebGen] Iterating on existing project...');
+    const result = await iterateWebsite(userPrompt, options, previousProject);
+    result.warnings = runSelfCheck(result.files);
+    if (result.warnings.length) console.warn('[WebGen] Self-check warnings:', result.warnings);
+    return result;
+  }
+
+  // Fail fast on a bad library slug — before any API spend
+  if (options.heroType === 'library' && !getHero(options.librarySlug)) {
+    throw new Error(`Library hero "${options.librarySlug || ''}" not found — pick a slug from the hero library catalog.`);
+  }
+
+  const sectionTypes = determineSectionTypes(options);
+
+  console.log('[WebGen] Pass 1/4: design brief...');
+  const brief = await generateDesignBrief(userPrompt, options);
+
+  // Resolve "auto": deterministic catalog scoring against the brief, static fallback.
+  let heroSelection;
+  if (brief.heroType === 'auto') {
+    const pick = autoSelectHero(brief);
+    brief.heroType = pick.slug ? 'library' : 'static';
+    if (pick.slug) brief.librarySlug = pick.slug;
+    heroSelection = { mode: 'auto', slug: pick.slug, score: pick.score, reason: pick.reason };
+    console.log('[WebGen] Auto hero selection:', pick.slug || 'static fallback', '—', pick.reason);
+  } else {
+    if (brief.heroType === 'library') brief.librarySlug = options.librarySlug;
+    heroSelection = { mode: 'manual', slug: brief.librarySlug || null, reason: `hero type "${brief.heroType}" chosen by user` };
+  }
+
+  console.log('[WebGen] Pass 2/4: scaffold (deterministic, no API call)...');
+  const scaffoldFiles = buildScaffoldFiles();
+
+  console.log('[WebGen] Pass 3/4: section components...');
+  const componentFiles = await generateComponents(userPrompt, brief, sectionTypes);
+
+  console.log('[WebGen] Pass 4/4: content JSON...');
+  const content = await generateContent(userPrompt, brief, sectionTypes, options);
+
+  const files = {
+    ...scaffoldFiles,
+    ...componentFiles,
+    ...(brief.heroType === 'library' ? buildLibraryHeroFiles(brief.librarySlug) : {}),
+    'app/page.jsx':          buildPageFile(sectionTypes),
+    'content/site.json':     JSON.stringify(content.site, null, 2),
+    'content/hero.json':     JSON.stringify(content.hero, null, 2),
+    'content/sections.json': JSON.stringify(content.sections, null, 2),
+  };
+
+  const warnings = runSelfCheck(files);
+  if (warnings.length) console.warn('[WebGen] Self-check warnings:', warnings);
+
+  console.log('[WebGen] Done. Files:', Object.keys(files).length);
+
+  return {
+    files,
+    warnings,
+    meta: { brief, sectionTypes, heroType: brief.heroType, heroSelection },
+  };
+}
+
+// Checks that a generated project has the files a Next.js static-export build needs
+export function validateProjectCompleteness(files) {
+  const required = [
+    'package.json', 'next.config.js', 'postcss.config.js', 'tailwind.config.js',
+    'app/layout.jsx', 'app/page.jsx', 'app/globals.css',
+    'content/site.json', 'content/hero.json', 'content/sections.json',
+    'components/Nav.jsx', 'components/Hero.jsx', 'components/Footer.jsx',
+  ];
+  const missing = required.filter((p) => !files[p]);
+  return { isComplete: missing.length === 0, missing };
 }
 
 // ── Template presets ──────────────────────────────────────────────────────────

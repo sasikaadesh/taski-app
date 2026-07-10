@@ -1,0 +1,90 @@
+{
+  "meta": {
+    "title": "Aurora — Glass Aurora Library Hero Test",
+    "description": "Test export exercising the library hero pipeline with the glass-aurora hero.",
+    "ogImage": "",
+    "siteName": "Aurora",
+    "locale": "en_US"
+  },
+  "nav": {
+    "logoText": "Aurora",
+    "links": [
+      {
+        "label": "About",
+        "href": "#about"
+      },
+      {
+        "label": "Features",
+        "href": "#features"
+      },
+      {
+        "label": "Gallery",
+        "href": "#gallery"
+      },
+      {
+        "label": "Testimonials",
+        "href": "#testimonials"
+      }
+    ],
+    "cta": {
+      "label": "Get Started",
+      "href": "#cta"
+    }
+  },
+  "footer": {
+    "brandBlurb": "A test site generated to verify the curated hero library export path.",
+    "columns": [
+      {
+        "title": "Site",
+        "links": [
+          {
+            "label": "About",
+            "href": "#about"
+          },
+          {
+            "label": "Features",
+            "href": "#features"
+          }
+        ]
+      },
+      {
+        "title": "Resources",
+        "links": [
+          {
+            "label": "Gallery",
+            "href": "#gallery"
+          },
+          {
+            "label": "Contact",
+            "href": "#"
+          }
+        ]
+      }
+    ],
+    "social": [
+      {
+        "platform": "twitter",
+        "href": "#"
+      },
+      {
+        "platform": "github",
+        "href": "#"
+      }
+    ],
+    "copyright": "© 2026 Aurora. Test export — not a real site."
+  },
+  "theme": {
+    "colors": {
+      "primary": "#7c5cff",
+      "accent": "#34e3c0",
+      "bg": "#070714",
+      "surface": "#12122a",
+      "text": "#e8e9ff"
+    },
+    "fonts": {
+      "heading": "Space Grotesk",
+      "body": "Inter",
+      "googleFontsUrl": "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Inter:wght@400;500;600&display=swap"
+    }
+  }
+}

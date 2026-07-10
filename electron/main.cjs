@@ -868,13 +868,41 @@ function writeWebsiteIndex(index) {
   fs.writeFileSync(WEBSITES_INDEX, JSON.stringify(index, null, 2), 'utf-8')
 }
 
-ipcMain.handle('websites-save', async (_event, { html, prompt, name }) => {
+// Generated sites are now full Next.js project trees, not one HTML file — each
+// site gets its own folder under WEBSITES_DIR, written/read path-by-path.
+function writeProjectFiles(baseDir, files) {
+  for (const [relPath, content] of Object.entries(files)) {
+    const fullPath = path.join(baseDir, relPath)
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true })
+    fs.writeFileSync(fullPath, content, 'utf-8')
+  }
+}
+
+function readProjectFiles(baseDir) {
+  const files = {}
+  function walk(dir, relBase) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name)
+      const rel  = relBase ? relBase + '/' + entry.name : entry.name
+      if (entry.isDirectory()) walk(full, rel)
+      else files[rel.replace(/\\/g, '/')] = fs.readFileSync(full, 'utf-8')
+    }
+  }
+  walk(baseDir, '')
+  return files
+}
+
+function projectSize(files) {
+  return Object.values(files).reduce((sum, c) => sum + c.length, 0)
+}
+
+ipcMain.handle('websites-save', async (_event, { files, prompt, heroType, name, meta }) => {
   try {
     ensureWebsitesDir()
-    const id       = 'site_' + Date.now()
-    const filename = id + '.html'
-    const filepath = path.join(WEBSITES_DIR, filename)
-    fs.writeFileSync(filepath, html, 'utf-8')
+    const id      = 'site_' + Date.now()
+    const siteDir = path.join(WEBSITES_DIR, id)
+    fs.mkdirSync(siteDir, { recursive: true })
+    writeProjectFiles(siteDir, files)
 
     const siteName = name ||
       (prompt || '').split(' ').slice(0, 5).join(' ').substring(0, 40) +
@@ -882,14 +910,15 @@ ipcMain.handle('websites-save', async (_event, { html, prompt, name }) => {
 
     const entry = {
       id,
-      name:        siteName || 'Untitled Site',
-      prompt:      prompt || '',
-      heroType:    data.heroType || 'normal',
-      createdAt:   new Date().toISOString(),
-      updatedAt:   new Date().toISOString(),
-      filename,
-      size:        html.length,
-      previewText: html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').substring(0, 150).trim(),
+      name:      siteName || 'Untitled Site',
+      prompt:    prompt || '',
+      heroType:  heroType || 'normal',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      folder:    id,
+      fileCount: Object.keys(files).length,
+      size:      projectSize(files),
+      meta:      meta || null,
     }
 
     const index = readWebsiteIndex()
@@ -914,9 +943,9 @@ ipcMain.handle('websites-load', async (_event, id) => {
     const index = readWebsiteIndex()
     const entry = index.find((s) => s.id === id)
     if (!entry) return { success: false, error: 'Not found' }
-    const filepath = path.join(WEBSITES_DIR, entry.filename)
-    const html     = fs.readFileSync(filepath, 'utf-8')
-    return { success: true, html, entry }
+    const siteDir = path.join(WEBSITES_DIR, entry.folder || entry.id)
+    const files   = readProjectFiles(siteDir)
+    return { success: true, files, entry }
   } catch (e) {
     return { success: false, error: e.message }
   }
@@ -927,8 +956,8 @@ ipcMain.handle('websites-delete', async (_event, id) => {
     const index = readWebsiteIndex()
     const entry = index.find((s) => s.id === id)
     if (entry) {
-      const filepath = path.join(WEBSITES_DIR, entry.filename)
-      if (fs.existsSync(filepath)) fs.unlinkSync(filepath)
+      const siteDir = path.join(WEBSITES_DIR, entry.folder || entry.id)
+      fs.rmSync(siteDir, { recursive: true, force: true })
       writeWebsiteIndex(index.filter((s) => s.id !== id))
     }
     return { success: true }
@@ -952,17 +981,19 @@ ipcMain.handle('websites-rename', async (_event, { id, name }) => {
   }
 })
 
-ipcMain.handle('websites-update', async (_event, { id, html, prompt }) => {
+ipcMain.handle('websites-update', async (_event, { id, files, prompt, meta }) => {
   try {
     ensureWebsitesDir()
     const index = readWebsiteIndex()
     const entry = index.find((s) => s.id === id)
     if (!entry) return { success: false, error: 'Not found' }
-    const filepath = path.join(WEBSITES_DIR, entry.filename)
-    fs.writeFileSync(filepath, html, 'utf-8')
+    const siteDir = path.join(WEBSITES_DIR, entry.folder || entry.id)
+    writeProjectFiles(siteDir, files)
     entry.updatedAt = new Date().toISOString()
-    entry.size      = html.length
+    entry.fileCount = Object.keys(files).length
+    entry.size      = projectSize(files)
     if (prompt) entry.prompt = prompt
+    if (meta)   entry.meta   = meta
     writeWebsiteIndex(index)
     return { success: true, entry }
   } catch (e) {

@@ -1,0 +1,106 @@
+{
+  "sections": [
+    {
+      "id": "about",
+      "type": "about",
+      "data": {
+        "heading": "Built from the hero library",
+        "body": "Everything above this section was rendered by a prebuilt, hand-curated hero component. The rest of the page uses deterministic stub sections so the export can be verified without any model calls.",
+        "image": {
+          "url": "https://images.unsplash.com/photo-1531366936337-7c912a4589a7?w=1200&q=80&auto=format&fit=crop",
+          "alt": "Aurora borealis over a dark landscape"
+        }
+      }
+    },
+    {
+      "id": "features",
+      "type": "features",
+      "data": {
+        "heading": "What this export verifies",
+        "items": [
+          {
+            "id": "f1",
+            "icon": "layers",
+            "title": "Hero source injection",
+            "description": "components/heroes/GlassAurora.jsx is written verbatim from the library."
+          },
+          {
+            "id": "f2",
+            "icon": "link",
+            "title": "Wrapper wiring",
+            "description": "components/Hero.jsx re-exports the library hero so page.jsx stays unchanged."
+          },
+          {
+            "id": "f3",
+            "icon": "palette",
+            "title": "Token theming",
+            "description": "The hero uses only semantic classes, themed by site.json CSS variables."
+          },
+          {
+            "id": "f4",
+            "icon": "check",
+            "title": "Self-check pass",
+            "description": "runSelfCheck and validateProjectCompleteness both run on this files-map."
+          }
+        ]
+      }
+    },
+    {
+      "id": "gallery",
+      "type": "gallery",
+      "data": {
+        "heading": "Gallery",
+        "images": [
+          {
+            "id": "g1",
+            "url": "https://images.unsplash.com/photo-1483347756197-71ef80e95f73?w=1200&q=80&auto=format&fit=crop",
+            "alt": "Green aurora curtain in the night sky"
+          },
+          {
+            "id": "g2",
+            "url": "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1200&q=80&auto=format&fit=crop",
+            "alt": "Starry sky over snowy mountains"
+          },
+          {
+            "id": "g3",
+            "url": "https://images.unsplash.com/photo-1444080748397-f442aa95c3e5?w=1200&q=80&auto=format&fit=crop",
+            "alt": "Milky way over a calm lake"
+          }
+        ]
+      }
+    },
+    {
+      "id": "testimonials",
+      "type": "testimonials",
+      "data": {
+        "heading": "Testimonials",
+        "items": [
+          {
+            "id": "t1",
+            "quote": "The glass panel and aurora glows rendered exactly as the catalog described.",
+            "name": "Test Runner",
+            "role": "QA"
+          },
+          {
+            "id": "t2",
+            "quote": "Swapped the palette in site.json and the whole hero re-themed itself.",
+            "name": "Second Tester",
+            "role": "Design"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cta",
+      "type": "cta",
+      "data": {
+        "heading": "Ready to ship the hero library?",
+        "subtext": "This CTA closes out the test page.",
+        "button": {
+          "label": "Get Started",
+          "href": "#"
+        }
+      }
+    }
+  ]
+}

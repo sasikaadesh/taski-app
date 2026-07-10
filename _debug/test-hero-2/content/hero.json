@@ -1,0 +1,14 @@
+{
+  "type": "library",
+  "librarySlug": "editorial-gradient",
+  "title": "Stories set in type that speaks louder",
+  "subtitle": "This project was exported through the library-hero pipeline: the editorial-gradient component came from src/lib/heroLibrary, themed entirely by content/site.json tokens.",
+  "ctas": [
+    {
+      "label": "Read the Story",
+      "href": "#about",
+      "variant": "primary"
+    }
+  ],
+  "images": []
+}

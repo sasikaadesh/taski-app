@@ -1,0 +1,38 @@
+[
+  {
+    "slug": "glass-aurora",
+    "name": "Glass Aurora",
+    "styleTags": ["dark", "glassmorphism", "gradient-glow", "backdrop-blur", "animated"],
+    "mood": ["premium", "futuristic", "sleek"],
+    "description": "Dark hero with soft aurora gradient glows behind a backdrop-blur glass panel. Eyebrow, headline, subtitle and two CTAs, with a CSS-only entrance rise and a slow floating glow.",
+    "thumbnail": "thumbnails/glass-aurora.png",
+    "requiredContentFields": ["eyebrow", "title", "subtitle", "ctas"]
+  },
+  {
+    "slug": "editorial-gradient",
+    "name": "Editorial Gradient",
+    "styleTags": ["light", "gradient-text", "mesh-gradient", "editorial", "typography-led"],
+    "mood": ["bold", "optimistic", "confident"],
+    "description": "Bold light hero led by a large editorial headline with gradient text over a soft mesh-gradient background. Single primary CTA and a gentle bouncing scroll cue, all CSS-only.",
+    "thumbnail": "thumbnails/editorial-gradient.png",
+    "requiredContentFields": ["title", "subtitle", "ctas"]
+  },
+  {
+    "slug": "shape-landing",
+    "name": "Shape Landing",
+    "styleTags": ["dark", "floating-shapes", "geometric", "gradient-text", "animated"],
+    "mood": ["elegant", "dramatic", "modern"],
+    "description": "Dark hero with softly glowing geometric shapes that drop in, settle and float behind the content. Eyebrow pill, two-line headline whose second line carries a primary-to-accent gradient, subtitle and CTAs, all entering with a staggered CSS-only fade-up. Adapted from KokonutUI's Shape Hero (21st.dev: kokonutd/shape-landing-hero, MIT).",
+    "thumbnail": "thumbnails/shape-landing.png",
+    "requiredContentFields": ["eyebrow", "title", "subtitle", "ctas"]
+  },
+  {
+    "slug": "sparkle-stats",
+    "name": "Sparkle Stats",
+    "styleTags": ["adaptive", "minimal", "badge-pill", "stats-row", "animated"],
+    "mood": ["clean", "confident", "product-led"],
+    "description": "Centered minimal hero with a sparkle eyebrow pill, two-line headline whose second line fades via a gradient, subtitle, CTA pair (primary carries an arrow that nudges on hover), and an optional stats row with hairline dividers (data.stats: [{ value, label }]). Everything enters with a staggered CSS-only fade-up; palette-neutral so it works on light or dark themes. Adapted from 21st.dev: moumensoliman/hero-section-shadcnui (MIT).",
+    "thumbnail": "thumbnails/sparkle-stats.png",
+    "requiredContentFields": ["eyebrow", "title", "subtitle", "ctas"]
+  }
+]

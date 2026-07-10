@@ -1,36 +1,12 @@
-// WebsiteGeneratorPanel — full-screen iterative website builder with live iframe preview.
+// WebsiteGeneratorPanel — full-screen iterative Next.js site builder (file tree view;
+// live in-browser preview lands in a later phase).
 
 import { useState, useRef, useEffect } from 'react';
 import JSZip from 'jszip';
-import html2canvas from 'html2canvas';
-import { generateWebsite } from '../lib/websiteGenerator';
+import { generateWebsite, validateProjectCompleteness } from '../lib/websiteGenerator';
 import { getSkill } from '../lib/skillLoader';
 import { isTTSEnabled, setTTSEnabled } from '../lib/ttsManager';
-
-function validateWebsiteCompleteness(html) {
-  const checks = {
-    hasNav:        /<nav[\s>]/i.test(html),
-    hasHero:       /class="[^"]*hero[^"]*"/i.test(html),
-    hasFooter:     /<footer[\s>]/i.test(html),
-    hasClosingHtml: /<\/html>\s*$/i.test(html.trim()),
-    hasImages:     /<img[\s>]/i.test(html),
-    sectionCount:  (html.match(/<section/gi) || []).length,
-  };
-
-  const isComplete =
-    checks.hasNav &&
-    checks.hasFooter &&
-    checks.hasClosingHtml &&
-    checks.sectionCount >= 4;
-
-  return { isComplete, checks };
-}
-
-const VIEWPORTS = {
-  desktop: { width: '100%',   label: '🖥',  height: '100%' },
-  tablet:  { width: '768px',  label: '⬜', height: '1024px' },
-  mobile:  { width: '390px',  label: '📱', height: '844px'  },
-};
+import HeroPicker from './HeroPicker';
 
 const GENERATE_STEPS = [
   'Analyzing your brief...',
@@ -113,60 +89,19 @@ function isCSSOnlyChange(text) {
   return cssKeywords.some(w => lower.includes(w));
 }
 
-// Injects base tag + click interceptor so links/forms do nothing in the preview
-function prepareHtmlForPreview(html) {
-  if (!html) return '';
-
-  const baseTag = '<base href="about:blank" target="_blank">';
-
-  // Intercept all clicks on <a> and form submits
-  const interceptScript = `<script>
-  (function() {
-    document.addEventListener('click', function(e) {
-      var a = e.target.closest('a');
-      if (a) { e.preventDefault(); e.stopPropagation(); }
-    }, true);
-    document.addEventListener('submit', function(e) {
-      e.preventDefault(); e.stopPropagation();
-    }, true);
-  })();
-<\/script>`;
-
-  let safe = html;
-
-  // Inject base tag right after <head>
-  const headIdx = safe.toLowerCase().indexOf('<head>');
-  if (headIdx >= 0) {
-    safe = safe.substring(0, headIdx + 6) + '\n' + baseTag + '\n' + safe.substring(headIdx + 6);
-  }
-
-  // Inject interceptor before </body>
-  const bodyCloseIdx = safe.toLowerCase().lastIndexOf('</body>');
-  if (bodyCloseIdx >= 0) {
-    safe = safe.substring(0, bodyCloseIdx) + '\n' + interceptScript + '\n' + safe.substring(bodyCloseIdx);
-  } else {
-    safe += '\n' + interceptScript;
-  }
-
-  return safe;
-}
-
 export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', prefillPrompt = '' }) {
   const startPrompt = initialPrompt || prefillPrompt || '';
 
   const [prompt,          setPrompt]          = useState(startPrompt);
   const [isGenerating,    setIsGenerating]    = useState(false);
-  const [generatedHtml,   setGeneratedHtml]   = useState(null);
+  const [project,         setProject]         = useState(null); // { files: {path: content}, meta: {brief, sectionTypes, heroType} }
   const [error,           setError]           = useState(null);
   const [versions,        setVersions]        = useState([]);
   const [currentVersion,  setCurrentVersion]  = useState(-1);
   const [isIterating,     setIsIterating]     = useState(false);
-  const [viewport,        setViewport]        = useState('desktop');
-  const [copied,          setCopied]          = useState(false);
   const [showOptions,     setShowOptions]     = useState(false);
   const [options,         setOptions]         = useState({ style: '', industry: '', colors: '' });
   const [generatingStep,  setGeneratingStep]  = useState(0);
-  const [iframeKey,       setIframeKey]       = useState(0);
   const [currentSiteId,   setCurrentSiteId]   = useState(null);
   const [activeTab,       setActiveTab]       = useState('generate');
   const [savedSites,      setSavedSites]      = useState([]);
@@ -174,20 +109,18 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
   const [renamingId,      setRenamingId]      = useState(null);
   const [renameValue,     setRenameValue]     = useState('');
   const [isMuted,         setIsMuted]         = useState(() => !isTTSEnabled());
-  const [heroType,        setHeroType]        = useState('normal');
+  const [heroType,        setHeroType]        = useState('auto'); // 'auto' | 'normal' | 'carousel' | '3d' | 'library'
+  const [librarySlug,     setLibrarySlug]     = useState(null);   // selected 21st.dev hero when heroType === 'library'
   const [selectedTheme,   setSelectedTheme]   = useState('auto');
   const [customColor,     setCustomColor]     = useState('#6366f1');
   const [includeContact,  setIncludeContact]  = useState(false);
   const [contactDetails,  setContactDetails]  = useState({ email: '', phone: '', address: '', showForm: true });
   const [saveStatus,      setSaveStatus]      = useState('idle'); // 'idle' | 'saving' | 'saved'
   const [elapsedSeconds,  setElapsedSeconds]  = useState(0);
-  const [isFullscreen,    setIsFullscreen]    = useState(false);
-  const [showExportMenu,  setShowExportMenu]  = useState(false);
   const [isExporting,     setIsExporting]     = useState(false);
 
   const autoGenRef = useRef(false);
   const timerRef    = useRef(null);
-  const iframeRef   = useRef(null);
 
   // Stay in sync with the shared TTS state — any panel (chat, this one) can toggle it
   useEffect(() => {
@@ -236,15 +169,6 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
     if (activeTab === 'archive') loadArchive();
   }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Escape key exits fullscreen preview
-  useEffect(() => {
-    function onKey(e) {
-      if (e.key === 'Escape' && isFullscreen) setIsFullscreen(false);
-    }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [isFullscreen]);
-
   // Auto-generate when opened with a pre-filled prompt
   useEffect(() => {
     if (startPrompt && !autoGenRef.current) {
@@ -265,11 +189,16 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
     if (!window.taskiAPI?.websitesLoad) return;
     const result = await window.taskiAPI.websitesLoad(id);
     if (result.success) {
-      setGeneratedHtml(result.html);
+      setProject({ files: result.files, meta: result.entry.meta || null });
       setCurrentSiteId(id);
       setPrompt(result.entry.prompt || '');
-      setIframeKey(prev => prev + 1);
       setActiveTab('generate');
+      // Sync hero selection with the loaded site so UPDATE doesn't see a phantom hero change
+      try {
+        const hero = JSON.parse(result.files['content/hero.json']);
+        setHeroType(hero.type === 'static' ? 'normal' : (hero.type || 'auto'));
+        setLibrarySlug(hero.type === 'library' ? (hero.librarySlug || null) : null);
+      } catch { /* legacy single-file site without content/hero.json — leave selection as-is */ }
     }
   }
 
@@ -288,11 +217,6 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
     setSavedSites(prev => prev.map(s => s.id === id ? { ...s, name: renameValue.trim() } : s));
     setRenamingId(null);
   }
-
-  // Force iframe remount on new HTML
-  useEffect(() => {
-    if (generatedHtml) setIframeKey(k => k + 1);
-  }, [generatedHtml]);
 
   // Cycle through progress steps while generating
   useEffect(() => {
@@ -333,27 +257,44 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
       try {
         if (attempt > 0) console.log('[WebGen] Retry attempt', attempt);
 
-        const html = await generateWebsite(
+        // Hero swap during iterate: if the panel's hero selection differs from the
+        // project's current hero.json, request a deterministic swap ('auto' = keep as-is).
+        let heroChange = null;
+        if (isIterate && project && heroType !== 'auto') {
+          const desiredType = heroType === 'normal' ? 'static' : heroType;
+          try {
+            const currentHero = JSON.parse(project.files['content/hero.json']);
+            if (desiredType === 'library') {
+              if (librarySlug && (currentHero.type !== 'library' || currentHero.librarySlug !== librarySlug)) {
+                heroChange = { type: 'library', librarySlug };
+              }
+            } else if (currentHero.type !== desiredType) {
+              heroChange = { type: desiredType };
+            }
+          } catch { /* legacy project without parsable hero.json — no hero swap */ }
+        }
+
+        const newProject = await generateWebsite(
           p,
-          { ...options, heroType, theme: themeConfig, contact: includeContact ? contactDetails : null },
-          isIterate ? generatedHtml : null
+          { ...options, heroType, librarySlug, heroChange, theme: themeConfig, contact: includeContact ? contactDetails : null },
+          isIterate ? project : null
         );
 
-        const { isComplete, checks } = validateWebsiteCompleteness(html);
-        console.log('[WebGen] Completeness check:', checks);
+        const { isComplete, missing } = validateProjectCompleteness(newProject.files);
+        console.log('[WebGen] Completeness check:', { isComplete, missing });
 
-        const newVersion = { html, prompt: p, timestamp: new Date().toISOString() };
+        const newVersion = { project: newProject, prompt: p, timestamp: new Date().toISOString() };
         setVersions(prev => [newVersion, ...prev].slice(0, 5));
         setCurrentVersion(0);
-        setGeneratedHtml(html);
+        setProject(newProject);
 
         // Auto-save to archive
         if (window.taskiAPI?.websitesSave) {
           try {
             if (isIterate && currentSiteId && window.taskiAPI?.websitesUpdate) {
-              await window.taskiAPI.websitesUpdate({ id: currentSiteId, html, prompt: p });
+              await window.taskiAPI.websitesUpdate({ id: currentSiteId, files: newProject.files, prompt: p, meta: newProject.meta });
             } else {
-              const saveResult = await window.taskiAPI.websitesSave({ html, prompt: p, heroType, name: null });
+              const saveResult = await window.taskiAPI.websitesSave({ files: newProject.files, prompt: p, heroType, meta: newProject.meta, name: null });
               if (saveResult.success) {
                 setCurrentSiteId(saveResult.id);
                 console.log('[WebGen] Auto-saved as', saveResult.id);
@@ -364,17 +305,14 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
           }
         }
 
+        const heroIssues = (newProject.warnings || []).filter(w => /hero/i.test(w));
         if (!isComplete) {
-          const missing = [
-            !checks.hasNav        && 'navigation',
-            !checks.hasFooter     && 'footer',
-            !checks.hasClosingHtml && 'proper closing',
-            checks.sectionCount < 4 && 'enough sections (' + checks.sectionCount + ' found)',
-          ].filter(Boolean).join(', ');
           setError(
-            'Generation was incomplete (missing: ' + missing +
+            'Generation was incomplete (missing: ' + missing.join(', ') +
             '). Click Regenerate to try again — this sometimes happens with complex briefs.'
           );
+        } else if (heroIssues.length) {
+          setError('Hero self-check failed: ' + heroIssues.join(' · ') + '. Try regenerating or pick a different hero.');
         } else {
           setError(null);
         }
@@ -398,16 +336,24 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
   function handleGenerate(overridePrompt) {
     const p = (overridePrompt ?? prompt).trim();
     if (!p || isWorking) return;
+    if (heroType === 'library' && !librarySlug) {
+      setError('Pick a hero from the 21st.dev library grid below the hero style dropdown first.');
+      return;
+    }
     runGenerate(p, false);
   }
 
   function handleUpdate() {
-    if (!prompt.trim() || !generatedHtml || isWorking) return;
+    if (!prompt.trim() || !project || isWorking) return;
+    if (heroType === 'library' && !librarySlug) {
+      setError('Pick a hero from the 21st.dev library grid below the hero style dropdown first.');
+      return;
+    }
     runGenerate(prompt, true);
   }
 
   function handleNewWebsite() {
-    setGeneratedHtml(null);
+    setProject(null);
     setCurrentSiteId(null);
     setVersions([]);
     setCurrentVersion(-1);
@@ -416,28 +362,7 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
 
   function handleVersionSelect(index) {
     setCurrentVersion(index);
-    setGeneratedHtml(versions[index].html);
-  }
-
-  function splitHtmlFiles(html) {
-    const styleMatches = html.match(/<style[^>]*>([\s\S]*?)<\/style>/gi) || [];
-    const cssContent = styleMatches
-      .map(s => s.replace(/<\/?style[^>]*>/gi, ''))
-      .join('\n\n');
-
-    const scriptMatches = html.match(/<script[^>]*>([\s\S]*?)<\/script>/gi) || [];
-    const jsContent = scriptMatches
-      .filter(s => !s.includes('src='))
-      .map(s => s.replace(/<\/?script[^>]*>/gi, ''))
-      .join('\n\n');
-
-    let indexHtml = html
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-      .replace(/<script(?![^>]*src=)[^>]*>[\s\S]*?<\/script>/gi, '')
-      .replace('</head>', '  <link rel="stylesheet" href="style.css">\n</head>')
-      .replace('</body>', '  <script src="script.js"><\/script>\n</body>');
-
-    return { html: indexHtml, css: cssContent, js: jsContent };
+    setProject(versions[index].project);
   }
 
   function getSiteFileName() {
@@ -450,28 +375,14 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
   }
 
   async function handleExportZip() {
-    if (!generatedHtml) return;
+    if (!project) return;
     setIsExporting(true);
     try {
-      const { html, css, js } = splitHtmlFiles(generatedHtml);
       const siteName = getSiteFileName();
-
       const zip = new JSZip();
-      zip.file('index.html', html);
-      zip.file('style.css', css);
-      zip.file('script.js', js);
-      zip.file('README.txt',
-        `Website generated by Taski AI\n` +
-        `Generated: ${new Date().toLocaleString()}\n` +
-        `Prompt: ${prompt.trim()}\n\n` +
-        `Files:\n` +
-        `- index.html: Main HTML file\n` +
-        `- style.css: All styles\n` +
-        `- script.js: All JavaScript\n\n` +
-        `To view: Open index.html in any browser.\n` +
-        `Make sure style.css and script.js are\n` +
-        `in the same folder as index.html.`
-      );
+      for (const [path, content] of Object.entries(project.files)) {
+        zip.file(path, content);
+      }
 
       const blob = await zip.generateAsync({
         type: 'blob',
@@ -495,58 +406,8 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
     }
   }
 
-  async function handleExportPng() {
-    if (!generatedHtml || !iframeRef.current) return;
-    setIsExporting(true);
-    try {
-      const iframeDoc = iframeRef.current.contentDocument || iframeRef.current.contentWindow?.document;
-      if (!iframeDoc?.body) throw new Error('Preview not fully loaded yet');
-
-      const canvas = await html2canvas(iframeDoc.body, {
-        allowTaint:  true,
-        useCORS:     true,
-        scale:       1.5,
-        width:       iframeDoc.body.scrollWidth,
-        height:      iframeDoc.body.scrollHeight,
-        windowWidth: iframeDoc.body.scrollWidth,
-        windowHeight: iframeDoc.body.scrollHeight,
-        backgroundColor: '#ffffff',
-        logging:     false,
-        foreignObjectRendering: false,
-      });
-
-      const siteName = getSiteFileName();
-      await new Promise((resolve, reject) => {
-        canvas.toBlob((blob) => {
-          if (!blob) { reject(new Error('Failed to encode PNG')); return; }
-          const url = URL.createObjectURL(blob);
-          const a   = document.createElement('a');
-          a.href     = url;
-          a.download = siteName + '.png';
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-          resolve();
-        }, 'image/png');
-      });
-    } catch (err) {
-      console.error('[Export PNG]', err);
-      alert('PNG export failed: ' + err.message + '\n\nTip: open the site in a browser and use Print → Save as PDF instead.');
-    } finally {
-      setIsExporting(false);
-    }
-  }
-
-  async function handleCopyHtml() {
-    if (!generatedHtml) return;
-    await navigator.clipboard.writeText(generatedHtml);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
-
   async function handleSaveToArchive() {
-    if (!generatedHtml || !window.taskiAPI?.websitesSave) return;
+    if (!project || !window.taskiAPI?.websitesSave) return;
 
     setSaveStatus('saving');
 
@@ -554,15 +415,17 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
       if (currentSiteId && window.taskiAPI?.websitesUpdate) {
         const result = await window.taskiAPI.websitesUpdate({
           id:     currentSiteId,
-          html:   generatedHtml,
+          files:  project.files,
           prompt: prompt.trim(),
+          meta:   project.meta,
         });
         if (result.success) setSaveStatus('saved');
       } else {
         const result = await window.taskiAPI.websitesSave({
-          html:     generatedHtml,
+          files:    project.files,
           prompt:   prompt.trim(),
           heroType: heroType,
+          meta:     project.meta,
           name:     null,
         });
         if (result.success) {
@@ -579,19 +442,6 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
       console.error('[Save]', err);
       setSaveStatus('idle');
     }
-  }
-
-  async function handleOpenInBrowser() {
-    if (!generatedHtml) return;
-    if (window.taskiAPI?.saveAndOpenHtml) {
-      await window.taskiAPI.saveAndOpenHtml(generatedHtml, 'taski-website.html');
-      return;
-    }
-    // Fallback: blob URL in new tab
-    const blob = new Blob([generatedHtml], { type: 'text/html' });
-    const url  = URL.createObjectURL(blob);
-    window.open(url, '_blank');
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
   }
 
   const textareaStyle = {
@@ -627,8 +477,6 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
   };
 
   const isWorking = isGenerating || isIterating;
-
-  const vp = VIEWPORTS[viewport];
 
   return (
     <div style={{
@@ -671,32 +519,6 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
         }}>
           ✦ WEBSITE GENERATOR
         </span>
-
-        {/* Viewport toggles */}
-        <div style={{ display: 'flex', gap: '3px', marginLeft: '8px' }}>
-          {Object.entries(VIEWPORTS).map(([key, val]) => (
-            <button
-              key={key}
-              onClick={() => setViewport(key)}
-              title={key}
-              style={{
-                background:     viewport === key ? 'rgba(0,212,255,0.15)' : 'transparent',
-                border:         `1px solid ${viewport === key ? 'rgba(0,212,255,0.5)' : 'rgba(0,212,255,0.2)'}`,
-                borderRadius:   '4px',
-                color:          viewport === key ? '#00d4ff' : 'rgba(0,212,255,0.4)',
-                width:          '26px',
-                height:         '26px',
-                cursor:         'pointer',
-                fontSize:       '13px',
-                display:        'flex',
-                alignItems:     'center',
-                justifyContent: 'center',
-              }}
-            >
-              {val.label}
-            </button>
-          ))}
-        </div>
 
         {/* Sound toggle */}
         <button
@@ -742,28 +564,9 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
 
         <div style={{ flex: 1 }} />
 
-        {/* Action buttons — only when HTML ready */}
-        {generatedHtml && !isWorking && (
+        {/* Action buttons — only when a project is ready */}
+        {project && !isWorking && (
           <>
-            <button
-              onClick={handleCopyHtml}
-              style={{
-                background:    copied ? 'rgba(0,255,136,0.1)' : 'transparent',
-                border:        `1px solid ${copied ? 'rgba(0,255,136,0.4)' : 'rgba(0,212,255,0.25)'}`,
-                borderRadius:  '6px',
-                color:         copied ? '#00ff88' : 'rgba(0,212,255,0.6)',
-                padding:       '4px 10px',
-                cursor:        'pointer',
-                fontFamily:    "'Rajdhani', sans-serif",
-                fontSize:      '10px',
-                letterSpacing: '0.08em',
-                transition:    'all 0.15s',
-                whiteSpace:    'nowrap',
-              }}
-            >
-              {copied ? '✓ COPIED' : '⎘ COPY HTML'}
-            </button>
-
             <button
               onClick={handleSaveToArchive}
               disabled={saveStatus === 'saving'}
@@ -788,116 +591,27 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
             </button>
 
             <button
-              onClick={handleOpenInBrowser}
+              onClick={handleExportZip}
+              disabled={isExporting}
               style={{
-                background:    'transparent',
-                border:        '1px solid rgba(0,212,255,0.25)',
+                background:    'rgba(0,212,255,0.08)',
+                border:        '1px solid rgba(0,212,255,0.3)',
                 borderRadius:  '6px',
-                color:         'rgba(0,212,255,0.6)',
-                padding:       '4px 10px',
-                cursor:        'pointer',
+                color:         '#00d4ff',
+                padding:       '5px 10px',
+                cursor:        isExporting ? 'not-allowed' : 'pointer',
                 fontFamily:    "'Rajdhani', sans-serif",
                 fontSize:      '10px',
                 letterSpacing: '0.08em',
                 transition:    'all 0.15s',
                 whiteSpace:    'nowrap',
+                display:       'flex',
+                alignItems:    'center',
+                gap:           '4px',
               }}
             >
-              ↗ OPEN
+              ⬇ EXPORT ZIP <span style={{ fontSize: '9px', color: 'rgba(0,212,255,0.3)' }}>full project</span>
             </button>
-
-            <button
-              onClick={() => setIsFullscreen((p) => !p)}
-              title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen preview'}
-              style={{
-                background:     isFullscreen ? 'rgba(0,212,255,0.12)' : 'transparent',
-                border:         `1px solid ${isFullscreen ? 'rgba(0,212,255,0.5)' : 'rgba(0,212,255,0.25)'}`,
-                borderRadius:   '6px',
-                width:          '30px',
-                height:         '30px',
-                cursor:         'pointer',
-                color:          isFullscreen ? '#00d4ff' : 'rgba(0,212,255,0.5)',
-                fontSize:       '13px',
-                display:        'flex',
-                alignItems:     'center',
-                justifyContent: 'center',
-                flexShrink:     0,
-                transition:     'all 0.15s',
-              }}
-            >
-              {isFullscreen ? '⊡' : '⛶'}
-            </button>
-
-            <div style={{ position: 'relative' }}>
-              <button
-                onClick={() => setShowExportMenu((p) => !p)}
-                style={{
-                  background:    'rgba(0,212,255,0.08)',
-                  border:        '1px solid rgba(0,212,255,0.3)',
-                  borderRadius:  '6px',
-                  color:         '#00d4ff',
-                  padding:       '5px 10px',
-                  cursor:        'pointer',
-                  fontFamily:    "'Rajdhani', sans-serif",
-                  fontSize:      '10px',
-                  letterSpacing: '0.08em',
-                  transition:    'all 0.15s',
-                  whiteSpace:    'nowrap',
-                  display:       'flex',
-                  alignItems:    'center',
-                  gap:           '4px',
-                }}
-              >
-                ⬇ EXPORT <span style={{ fontSize: '8px' }}>▾</span>
-              </button>
-
-              {showExportMenu && (
-                <div
-                  onMouseLeave={() => setShowExportMenu(false)}
-                  style={{
-                    position:      'absolute',
-                    top:           '100%',
-                    right:         0,
-                    marginTop:     '4px',
-                    background:    'rgba(2,10,25,0.98)',
-                    border:        '1px solid rgba(0,212,255,0.2)',
-                    borderRadius:  '8px',
-                    overflow:      'hidden',
-                    zIndex:        100,
-                    minWidth:      '170px',
-                    boxShadow:     '0 8px 24px rgba(0,0,0,0.5)',
-                  }}
-                >
-                  <button
-                    onClick={() => { setShowExportMenu(false); handleExportZip(); }}
-                    style={{
-                      width: '100%', padding: '8px 12px', background: 'transparent', border: 'none',
-                      color: '#e0f4ff', fontFamily: "'Rajdhani', sans-serif", fontSize: '11px',
-                      cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '8px',
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,212,255,0.08)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                  >
-                    📦 Export as ZIP
-                    <span style={{ fontSize: '9px', color: 'rgba(0,212,255,0.3)', marginLeft: 'auto' }}>html+css+js</span>
-                  </button>
-                  <button
-                    onClick={() => { setShowExportMenu(false); handleExportPng(); }}
-                    style={{
-                      width: '100%', padding: '8px 12px', background: 'transparent',
-                      border: 'none', borderTop: '1px solid rgba(0,212,255,0.08)',
-                      color: '#e0f4ff', fontFamily: "'Rajdhani', sans-serif", fontSize: '11px',
-                      cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '8px',
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,212,255,0.08)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                  >
-                    🖼 Export as PNG
-                    <span style={{ fontSize: '9px', color: 'rgba(0,212,255,0.3)', marginLeft: 'auto' }}>full page</span>
-                  </button>
-                </div>
-              )}
-            </div>
           </>
         )}
 
@@ -1137,21 +851,6 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
                     {/* Action buttons */}
                     <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
                       <button
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          const result = await window.taskiAPI?.websitesLoad(site.id);
-                          if (result?.success && window.taskiAPI?.saveAndOpenHtml) {
-                            window.taskiAPI.saveAndOpenHtml(result.html, site.name.replace(/[^a-z0-9]/gi, '-').toLowerCase() + '.html');
-                          }
-                        }}
-                        title="Open in browser"
-                        style={{ background: 'transparent', border: 'none', color: 'rgba(0,212,255,0.4)', cursor: 'pointer', fontSize: '13px', padding: '2px 3px', lineHeight: 1 }}
-                        onMouseEnter={e => { e.currentTarget.style.color = '#00d4ff'; }}
-                        onMouseLeave={e => { e.currentTarget.style.color = 'rgba(0,212,255,0.4)'; }}
-                      >
-                        ↗
-                      </button>
-                      <button
                         onClick={(e) => handleDeleteSite(site.id, e)}
                         title="Delete website"
                         style={{ background: 'transparent', border: 'none', color: 'rgba(255,68,68,0.3)', cursor: 'pointer', fontSize: '14px', padding: '2px 3px', lineHeight: 1 }}
@@ -1187,7 +886,10 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
                       letterSpacing: '0.06em',
                       alignSelf:     'flex-start',
                     }}>
-                      {site.heroType === 'carousel' ? '🎠 CAROUSEL' : '✦ 3D'}
+                      {site.heroType === 'carousel' ? '🎠 CAROUSEL'
+                        : site.heroType === '3d' ? '✦ 3D'
+                        : site.heroType === 'library' ? '✨ 21ST.DEV'
+                        : '⚡ AUTO'}
                     </span>
                   )}
 
@@ -1225,7 +927,7 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
                 display:       'block',
                 marginBottom:  '5px',
               }}>
-                {generatedHtml ? 'ORIGINAL PROMPT' : 'DESCRIBE YOUR WEBSITE'}
+                {project ? 'ORIGINAL PROMPT' : 'DESCRIBE YOUR WEBSITE'}
               </label>
               <textarea
                 value={prompt}
@@ -1235,7 +937,7 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
                 style={textareaStyle}
                 onFocus={e  => { e.target.style.borderColor = 'rgba(0,212,255,0.5)'; }}
                 onBlur={e   => { e.target.style.borderColor = 'rgba(0,212,255,0.2)'; }}
-                onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) (generatedHtml ? handleUpdate() : handleGenerate()); }}
+                onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) (project ? handleUpdate() : handleGenerate()); }}
               />
               <div style={{
                 fontSize:   '9px',
@@ -1243,14 +945,14 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
                 fontFamily: "'Rajdhani', sans-serif",
                 marginTop:  '3px',
               }}>
-                {generatedHtml
+                {project
                   ? 'Edit prompt above and click UPDATE to iterate — or clear prompt for a new site'
                   : 'Cmd+Enter to generate'}
               </div>
             </div>
 
             {/* Quick-start pills — only before first generation */}
-            {!generatedHtml && (() => {
+            {!project && (() => {
               const skill = getSkill('/website');
               const subs  = skill?.subcategories || [];
               if (!subs.length) return null;
@@ -1346,10 +1048,30 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
                   e.target.style.boxShadow   = 'none';
                 }}
               >
+                <option value="auto">⚡ Auto — Best match from your brief</option>
                 <option value="normal">🖼 Static Hero — Unsplash background</option>
                 <option value="carousel">🎠 Carousel Hero — Sliding images</option>
                 <option value="3d">✦ 3D Motion Hero — Particle animation</option>
+                <option value="library">✨ 21st.dev Hero — Curated library</option>
               </select>
+
+              {heroType === 'auto' && (
+                <div style={{
+                  fontSize:   '9px',
+                  color:      'rgba(0,212,255,0.25)',
+                  fontFamily: "'Rajdhani', sans-serif",
+                  marginTop:  '3px',
+                }}>
+                  Best-fitting library hero is picked from your brief — falls back to static
+                </div>
+              )}
+
+              {/* 21st.dev hero picker — live mini-previews of every catalog hero */}
+              {heroType === 'library' && (
+                <div style={{ marginTop: '8px' }}>
+                  <HeroPicker selectedSlug={librarySlug} onSelect={setLibrarySlug} />
+                </div>
+              )}
             </div>
 
             {/* Color theme picker */}
@@ -1616,7 +1338,7 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
             )}
 
             {/* Style-only change hint — shown when iterating with a CSS-focused prompt */}
-            {generatedHtml && isCSSOnlyChange(prompt) && (
+            {project && isCSSOnlyChange(prompt) && (
               <div style={{
                 fontSize:   '10px',
                 color:      'rgba(0,255,136,0.5)',
@@ -1629,7 +1351,7 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
 
             {/* Generate / Update button — behavior changes once a site exists */}
             <button
-              onClick={generatedHtml ? handleUpdate : () => handleGenerate()}
+              onClick={project ? handleUpdate : () => handleGenerate()}
               disabled={isWorking || !prompt.trim()}
               style={{
                 ...btnBase,
@@ -1643,13 +1365,13 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
               {isWorking ? (
                 <>
                   <span style={{ animation: 'webgen-spin 1s linear infinite', display: 'inline-block' }}>⟳</span>
-                  {generatedHtml ? 'UPDATING...' : 'GENERATING...'}
+                  {project ? 'UPDATING...' : 'GENERATING...'}
                 </>
-              ) : generatedHtml ? '↺ UPDATE WEBSITE' : '✦ GENERATE WEBSITE'}
+              ) : project ? '↺ UPDATE WEBSITE' : '✦ GENERATE WEBSITE'}
             </button>
 
             {/* New website — resets state for a fresh generation */}
-            {generatedHtml && (
+            {project && (
               <button
                 onClick={handleNewWebsite}
                 style={{
@@ -1678,7 +1400,7 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
               </button>
             )}
 
-            {generatedHtml && (
+            {project && (
               <>
                 {/* Version history */}
                 {versions.length > 1 && (
@@ -1738,7 +1460,7 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
                 lineHeight:   1.5,
               }}>
                 ⚠ {error}
-                {!generatedHtml && (
+                {!project && (
                   <button
                     onClick={() => handleGenerate()}
                     style={{
@@ -1762,7 +1484,7 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
             )}
 
             {/* Regenerate button — shown when generation was incomplete but partial HTML exists */}
-            {error && generatedHtml && (
+            {error && project && (
               <button
                 onClick={() => handleGenerate()}
                 disabled={isWorking}
@@ -1803,7 +1525,7 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
         }}>
 
           {/* Empty state */}
-          {!generatedHtml && !isWorking && (
+          {!project && !isWorking && (
             <div style={{
               flex:           1,
               display:        'flex',
@@ -1905,8 +1627,8 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
             </div>
           )}
 
-          {/* Live preview iframe */}
-          {generatedHtml && !isWorking && (
+          {/* Project file tree — live in-browser preview lands in the next phase */}
+          {project && !isWorking && (
             <div style={{
               flex:          1,
               display:       'flex',
@@ -1914,7 +1636,6 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
               overflow:      'hidden',
               background:    '#0a0a0a',
             }}>
-              {/* Preview bar */}
               <div style={{
                 padding:      '3px 12px',
                 background:   'rgba(0,0,0,0.6)',
@@ -1925,84 +1646,39 @@ export default function WebsiteGeneratorPanel({ onClose, initialPrompt = '', pre
                 letterSpacing:'0.1em',
                 flexShrink:   0,
               }}>
-                LIVE PREVIEW — LINKS DISABLED
+                PROJECT FILES — LIVE PREVIEW COMING NEXT PHASE
               </div>
 
-              {/* Viewport wrapper */}
               <div style={{
-                flex:           1,
-                overflow:       'auto',
-                display:        'flex',
-                justifyContent: 'center',
-                padding:        viewport !== 'desktop' ? '16px' : '0',
-                background:     viewport !== 'desktop' ? '#111' : 'transparent',
+                padding:      '10px 16px',
+                fontSize:     '11px',
+                fontFamily:   "'Rajdhani', sans-serif",
+                color:        'rgba(0,212,255,0.4)',
+                lineHeight:   1.6,
+                borderBottom: '1px solid rgba(0,212,255,0.08)',
+                flexShrink:   0,
               }}>
-                <div style={{
-                  width:        vp.width,
-                  height:       viewport !== 'desktop' ? vp.height : '100%',
-                  minHeight:    '500px',
-                  flexShrink:   0,
-                  background:   '#fff',
-                  boxShadow:    viewport !== 'desktop' ? '0 20px 60px rgba(0,0,0,0.6)' : 'none',
-                  borderRadius: viewport !== 'desktop' ? '10px' : '0',
-                  overflow:     'hidden',
-                  position:     'relative',
-                }}>
-                  <iframe
-                    ref={iframeRef}
-                    key={iframeKey}
-                    srcDoc={prepareHtmlForPreview(generatedHtml)}
-                    style={{
-                      width:   '100%',
-                      height:  '100%',
-                      border:  'none',
-                      display: 'block',
-                    }}
-                    sandbox="allow-scripts allow-same-origin"
-                    title="Generated Website Preview"
-                    loading="eager"
-                    onLoad={() => console.log('[Preview] iframe loaded')}
-                  />
-                </div>
+                Export as ZIP, then run <code style={{ color: '#00d4ff' }}>npm install &amp;&amp; npm run dev</code> to preview locally,
+                or <code style={{ color: '#00d4ff' }}>npm run build</code> for the static export (outputs to <code style={{ color: '#00d4ff' }}>out/</code>).
+              </div>
+
+              <div style={{ flex: 1, overflowY: 'auto', padding: '10px 16px' }}>
+                {Object.keys(project.files).sort().map((path) => (
+                  <div key={path} style={{
+                    fontSize:   '11px',
+                    fontFamily: 'monospace',
+                    color:      'rgba(224,244,255,0.6)',
+                    padding:    '3px 0',
+                    borderBottom: '1px solid rgba(0,212,255,0.04)',
+                  }}>
+                    {path}
+                  </div>
+                ))}
               </div>
             </div>
           )}
         </div>
       </div>
-
-      {/* ── FULLSCREEN PREVIEW OVERLAY ── */}
-      {isFullscreen && generatedHtml && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 9999,
-          background: '#fff', display: 'flex', flexDirection: 'column',
-        }}>
-          <div style={{
-            height: '36px', background: 'rgba(2,10,25,0.95)', display: 'flex',
-            alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', flexShrink: 0,
-          }}>
-            <span style={{ fontSize: '10px', color: 'rgba(0,212,255,0.4)', fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em' }}>
-              FULL PREVIEW — LINKS DISABLED
-            </span>
-            <button
-              onClick={() => setIsFullscreen(false)}
-              style={{
-                background: 'transparent', border: '1px solid rgba(255,68,68,0.3)', borderRadius: '4px',
-                color: 'rgba(255,68,68,0.6)', padding: '3px 10px', cursor: 'pointer',
-                fontFamily: "'Rajdhani', sans-serif", fontSize: '10px', letterSpacing: '0.08em',
-              }}
-            >
-              ✕ EXIT FULLSCREEN
-            </button>
-          </div>
-          <iframe
-            key={iframeKey + '-fullscreen'}
-            srcDoc={prepareHtmlForPreview(generatedHtml)}
-            style={{ flex: 1, border: 'none', background: '#fff' }}
-            sandbox="allow-scripts allow-same-origin"
-            title="Full Preview"
-          />
-        </div>
-      )}
 
       {/* ── EXPORTING OVERLAY ── */}
       {isExporting && (

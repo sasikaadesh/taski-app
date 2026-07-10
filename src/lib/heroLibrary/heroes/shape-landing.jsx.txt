@@ -1,0 +1,136 @@
+// ShapeLanding — curated library hero: floating geometric gradient shapes drift behind a staggered fade-up headline with a gradient second line, CSS-only motion
+
+export default function ShapeLanding({ data }) {
+  const { eyebrow, title, subtitle, ctas = [] } = data || {};
+
+  // The source design splits the headline over two lines (plain, then gradient script).
+  const words = String(title || '').trim().split(/\s+/).filter(Boolean);
+  const mid = Math.ceil(words.length / 2);
+  const line1 = words.slice(0, mid).join(' ');
+  const line2 = words.slice(mid).join(' ');
+
+  const shapes = [
+    { pos: 'left-[-15%] top-[-10%]', width: 300, height: 500, rotate: -8, radius: 24, delay: 0.3, tone: 'from-primary/25' },
+    { pos: 'bottom-[-5%] right-[-20%]', width: 600, height: 200, rotate: 15, radius: 20, delay: 0.5, tone: 'from-accent/25' },
+    { pos: 'left-[-5%] top-[40%]', width: 300, height: 300, rotate: 24, radius: 32, delay: 0.4, tone: 'from-primary/20' },
+    { pos: 'right-[10%] top-[5%]', width: 250, height: 100, rotate: -20, radius: 12, delay: 0.6, tone: 'from-accent/20' },
+    { pos: 'right-[-10%] top-[45%]', width: 400, height: 150, rotate: 35, radius: 16, delay: 0.7, tone: 'from-primary/15' },
+    { pos: 'bottom-[10%] left-[20%]', width: 200, height: 200, rotate: -25, radius: 28, delay: 0.2, tone: 'from-accent/15' },
+    { pos: 'left-[40%] top-[15%]', width: 150, height: 80, rotate: 45, radius: 10, delay: 0.8, tone: 'from-primary/20' },
+    { pos: 'left-[25%] top-[60%]', width: 450, height: 120, rotate: -12, radius: 18, delay: 0.9, tone: 'from-accent/20' },
+  ];
+
+  const rise = (i) => ({ animation: `sl-up 1s cubic-bezier(0.25, 0.4, 0.25, 1) ${0.5 + i * 0.2}s both` });
+
+  return (
+    <section className="relative flex min-h-screen w-full items-center justify-center overflow-hidden bg-bg px-6 py-24">
+      <style>{`
+        @keyframes sl-drop {
+          0%   { opacity: 0; transform: translateY(-150px) rotate(calc(var(--sl-rotate) - 15deg)); }
+          50%  { opacity: 1; }
+          100% { opacity: 1; transform: translateY(0) rotate(var(--sl-rotate)); }
+        }
+        @keyframes sl-float {
+          0%, 100% { transform: translateY(0); }
+          50%      { transform: translateY(15px); }
+        }
+        @keyframes sl-up {
+          from { opacity: 0; transform: translateY(30px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+
+      <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-accent/5 blur-3xl" />
+
+      <div aria-hidden="true" className="absolute inset-0 overflow-hidden">
+        {shapes.map((s, i) => (
+          <div
+            key={i}
+            className={'absolute ' + s.pos}
+            style={{
+              '--sl-rotate': s.rotate + 'deg',
+              animation: `sl-drop 2.4s cubic-bezier(0.23, 0.86, 0.39, 0.96) ${s.delay}s both`,
+            }}
+          >
+            <div
+              className="relative"
+              style={{ width: s.width, height: s.height, animation: 'sl-float 12s ease-in-out infinite' }}
+            >
+              <div
+                className={'absolute inset-0 bg-gradient-to-r to-transparent ring-1 ring-text/10 backdrop-blur-[1px] ' + s.tone}
+                style={{ borderRadius: s.radius }}
+              >
+                <div
+                  className="absolute inset-0 text-text opacity-[0.08]"
+                  style={{
+                    borderRadius: s.radius,
+                    background: 'radial-gradient(circle at 50% 50%, currentColor, transparent 70%)',
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="relative z-10 mx-auto w-full max-w-3xl text-center">
+        {eyebrow && (
+          <div
+            className="mb-8 inline-flex items-center gap-2 rounded-full border border-text/10 bg-surface/50 px-4 py-1.5"
+            style={rise(0)}
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+            <span className="font-body text-sm tracking-wide text-text/60">{eyebrow}</span>
+          </div>
+        )}
+
+        <h1
+          className="mb-6 font-heading text-4xl font-bold tracking-tight text-text sm:text-6xl md:mb-8 md:text-7xl"
+          style={rise(1)}
+        >
+          <span className="bg-gradient-to-b from-text to-text/80 bg-clip-text text-transparent">{line1}</span>
+          {line2 && (
+            <>
+              <br />
+              <span className="bg-gradient-to-r from-primary via-text/90 to-accent bg-clip-text italic text-transparent">
+                {line2}
+              </span>
+            </>
+          )}
+        </h1>
+
+        {subtitle && (
+          <p
+            className="mx-auto mb-10 max-w-xl font-body text-base font-light leading-relaxed tracking-wide text-text/40 sm:text-lg md:text-xl"
+            style={rise(2)}
+          >
+            {subtitle}
+          </p>
+        )}
+
+        {ctas.length > 0 && (
+          <div className="flex flex-wrap items-center justify-center gap-4" style={rise(3)}>
+            {ctas.map((cta) => (
+              <a
+                key={cta.label}
+                href={cta.href}
+                className={
+                  cta.variant === 'secondary'
+                    ? 'rounded-full border border-text/20 px-7 py-3 font-body text-text transition-colors hover:border-accent hover:text-accent'
+                    : 'rounded-full bg-primary px-7 py-3 font-body text-bg transition-transform hover:scale-105'
+                }
+              >
+                {cta.label}
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-gradient-to-t from-bg via-transparent to-bg/80"
+      />
+    </section>
+  );
+}

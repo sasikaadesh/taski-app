@@ -1,0 +1,119 @@
+// SparkleStats — curated library hero: sparkle eyebrow pill, gradient-fade second headline line, CTAs and an optional stats row, entering with a staggered CSS-only fade-up
+
+export default function SparkleStats({ data }) {
+  const { eyebrow, title, subtitle, ctas = [], stats = [] } = data || {};
+
+  // The source design splits the headline over two lines (plain, then gradient fade).
+  const words = String(title || '').trim().split(/\s+/).filter(Boolean);
+  const mid = Math.ceil(words.length / 2);
+  const line1 = words.slice(0, mid).join(' ');
+  const line2 = words.slice(mid).join(' ');
+
+  const rise = (i) => ({ animation: `ss-up 0.5s ease-out ${0.1 + i * 0.15}s both` });
+
+  return (
+    <section className="relative flex min-h-screen w-full flex-col items-center justify-center overflow-hidden bg-bg px-6 py-24 text-center">
+      <style>{`
+        @keyframes ss-up {
+          from { opacity: 0; transform: translateY(20px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+
+      {eyebrow && (
+        <div className="mb-4" style={rise(0)}>
+          <span className="inline-flex items-center gap-2 rounded-full border border-text/20 bg-text/10 px-4 py-1.5 font-body text-sm font-medium text-text/70">
+            <svg
+              aria-hidden="true"
+              className="h-4 w-4 text-primary"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
+              <path d="M20 3v4" />
+              <path d="M22 5h-4" />
+              <path d="M4 17v2" />
+              <path d="M5 18H3" />
+            </svg>
+            {eyebrow}
+          </span>
+        </div>
+      )}
+
+      <h1
+        className="mb-6 font-heading text-5xl font-bold tracking-tight text-text md:text-7xl"
+        style={rise(1)}
+      >
+        {line1}
+        {line2 && (
+          <>
+            <br />
+            <span className="bg-gradient-to-r from-text to-text/60 bg-clip-text text-transparent">
+              {line2}
+            </span>
+          </>
+        )}
+      </h1>
+
+      {subtitle && (
+        <p className="mx-auto mb-8 max-w-2xl font-body text-lg text-text/70" style={rise(2)}>
+          {subtitle}
+        </p>
+      )}
+
+      {ctas.length > 0 && (
+        <div className="flex flex-wrap items-center justify-center gap-4" style={rise(3)}>
+          {ctas.map((cta) => (
+            <a
+              key={cta.label}
+              href={cta.href}
+              className={
+                cta.variant === 'secondary'
+                  ? 'rounded-full border border-text/20 px-7 py-3 font-body text-text transition-colors hover:border-accent hover:text-accent'
+                  : 'group inline-flex items-center gap-2 rounded-full bg-primary px-7 py-3 font-body text-bg transition-transform hover:scale-105'
+              }
+            >
+              {cta.label}
+              {cta.variant !== 'secondary' && (
+                <svg
+                  aria-hidden="true"
+                  className="h-4 w-4 transition-transform group-hover:translate-x-1"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M5 12h14" />
+                  <path d="m12 5 7 7-7 7" />
+                </svg>
+              )}
+            </a>
+          ))}
+        </div>
+      )}
+
+      {stats.length > 0 && (
+        <div
+          className="mt-12 flex flex-wrap items-center justify-center gap-8 font-body text-sm text-text/60"
+          style={rise(4)}
+        >
+          {stats.map((stat, i) => (
+            <div key={stat.label} className="flex items-center gap-8">
+              {i > 0 && <div aria-hidden="true" className="h-8 w-px bg-text/15" />}
+              <div>
+                <div className="font-heading text-2xl font-bold text-text">{stat.value}</div>
+                <div>{stat.label}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
