@@ -4,8 +4,9 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { listHeroes, getHero } from '../lib/heroLibrary/index.js';
 import { buildHeroPreviewHtml, pickNeutralPalette } from '../lib/heroPreviewHarness.js';
 
-const PREVIEW_BASE_WIDTH  = 1200; // heroes render at desktop width inside the iframe...
-const PREVIEW_BASE_HEIGHT = 750;  // ...and get scaled down to card size (16:10)
+const PREVIEW_BASE_WIDTH  = 1280; // virtual desktop viewport the hero lays out against...
+const PREVIEW_BASE_HEIGHT = 800;  // ...before being scaled down into the thumbnail box
+const THUMB_HEIGHT        = 160;  // every card's preview box is this tall, so the grid stays even
 
 export default function HeroPicker({ selectedSlug, onSelect }) {
   const heroes = listHeroes();
@@ -32,7 +33,18 @@ export default function HeroPicker({ selectedSlug, onSelect }) {
   }
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '8px' }}>
+    <div style={{
+      display:             'grid',
+      // auto-fill collapses to 1 column in a narrow panel, 2 once it's wide enough
+      gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
+      gap:                 '8px',
+    }}>
+      <style>{`
+        @keyframes heroPickerShimmer {
+          from { background-position: 200% 0; }
+          to   { background-position: -200% 0; }
+        }
+      `}</style>
       {heroes.map((hero) => (
         <HeroCard
           key={hero.slug}
@@ -48,6 +60,7 @@ export default function HeroPicker({ selectedSlug, onSelect }) {
 function HeroCard({ hero, selected, onSelect }) {
   const previewRef = useRef(null);
   const [inView, setInView] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [scale,  setScale]  = useState(0);
 
   // Lazy-render: only mount this card's sandboxed iframe once it scrolls into view,
@@ -57,11 +70,22 @@ function HeroCard({ hero, selected, onSelect }) {
     if (!el) return;
     const observer = new IntersectionObserver(([entry]) => {
       if (entry.isIntersecting) {
-        setScale(el.clientWidth / PREVIEW_BASE_WIDTH);
         setInView(true);
         observer.disconnect();
       }
     }, { rootMargin: '120px' });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Scale tracks the thumbnail box width so the preview stays correct when the
+  // panel is resized/dragged or the grid switches between 1 and 2 columns.
+  useEffect(() => {
+    const el = previewRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      setScale(entry.contentRect.width / PREVIEW_BASE_WIDTH);
+    });
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
@@ -100,26 +124,35 @@ function HeroCard({ hero, selected, onSelect }) {
         if (!selected) e.currentTarget.style.borderColor = 'rgba(0,212,255,0.15)';
       }}
     >
-      {/* Live mini-preview — real component source rendered in a sandboxed iframe, scaled down */}
+      {/* Live mini-preview — the hero lays out against a fixed virtual desktop viewport
+          inside the iframe, scaled to the box width; the iframe is absolutely positioned
+          so its unscaled 800px layout height never inflates the card, and the fixed-height
+          box crops to the hero's top portion. */}
       <div
         ref={previewRef}
         style={{
           position:     'relative',
           width:        '100%',
-          aspectRatio:  '16 / 10',
+          height:       `${THUMB_HEIGHT}px`,
           overflow:     'hidden',
           borderRadius: '6px',
           background:   '#0b1220',
           border:       '1px solid rgba(0,212,255,0.1)',
         }}
       >
-        {previewHtml ? (
+        {previewHtml && scale > 0 && (
           <iframe
             title={`${hero.name} preview`}
             sandbox="allow-scripts"
             srcDoc={previewHtml}
             scrolling="no"
+            tabIndex={-1}
+            aria-hidden="true"
+            onLoad={() => setLoaded(true)}
             style={{
+              position:        'absolute',
+              top:             0,
+              left:            0,
               width:           `${PREVIEW_BASE_WIDTH}px`,
               height:          `${PREVIEW_BASE_HEIGHT}px`,
               transform:       `scale(${scale})`,
@@ -127,38 +160,47 @@ function HeroCard({ hero, selected, onSelect }) {
               border:          'none',
               display:         'block',
               pointerEvents:   'none', // clicks fall through to the card
+              opacity:         loaded ? 1 : 0,
+              transition:      'opacity 0.25s',
             }}
           />
-        ) : (
-          <div style={{
+        )}
+        {!loaded && (
+          <div aria-hidden="true" style={{
             position:       'absolute',
             inset:          0,
+            padding:        '22px 16px',
             display:        'flex',
-            alignItems:     'center',
-            justifyContent: 'center',
-            fontFamily:     "'Rajdhani', sans-serif",
-            fontSize:       '10px',
-            letterSpacing:  '0.15em',
-            color:          'rgba(0,212,255,0.25)',
+            flexDirection:  'column',
+            gap:            '8px',
+            background:     'linear-gradient(100deg, rgba(0,212,255,0.03) 40%, rgba(0,212,255,0.12) 50%, rgba(0,212,255,0.03) 60%)',
+            backgroundSize: '200% 100%',
+            animation:      'heroPickerShimmer 1.4s linear infinite',
           }}>
-            ◌ LOADING PREVIEW
+            {/* faux hero skeleton: headline, subline, CTA pill */}
+            <div style={{ width: '55%', height: '12px', borderRadius: '3px', background: 'rgba(0,212,255,0.12)' }} />
+            <div style={{ width: '75%', height: '7px',  borderRadius: '3px', background: 'rgba(0,212,255,0.08)' }} />
+            <div style={{ width: '40%', height: '7px',  borderRadius: '3px', background: 'rgba(0,212,255,0.08)' }} />
+            <div style={{ width: '72px', height: '18px', borderRadius: '9px', marginTop: '6px', border: '1px solid rgba(0,212,255,0.25)', background: 'rgba(0,212,255,0.06)' }} />
           </div>
         )}
-        <span style={{
-          position:      'absolute',
-          top:           '4px',
-          right:         '4px',
-          padding:       '1px 6px',
-          borderRadius:  '3px',
-          background:    'rgba(2,8,20,0.75)',
-          border:        '1px solid rgba(0,212,255,0.25)',
-          fontFamily:    "'Rajdhani', sans-serif",
-          fontSize:      '8px',
-          letterSpacing: '0.12em',
-          color:         'rgba(0,212,255,0.6)',
-        }}>
-          LIVE
-        </span>
+        {loaded && (
+          <span style={{
+            position:      'absolute',
+            top:           '4px',
+            right:         '4px',
+            padding:       '1px 6px',
+            borderRadius:  '3px',
+            background:    'rgba(2,8,20,0.75)',
+            border:        '1px solid rgba(0,212,255,0.25)',
+            fontFamily:    "'Rajdhani', sans-serif",
+            fontSize:      '8px',
+            letterSpacing: '0.12em',
+            color:         'rgba(0,212,255,0.6)',
+          }}>
+            LIVE
+          </span>
+        )}
       </div>
 
       {/* Name + selected state */}
