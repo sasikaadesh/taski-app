@@ -25,6 +25,8 @@ import {
 import { isAuthenticated } from '../lib/googleAuth';
 import { searchEmails, formatEmailsForPrompt, sendEmail, buildQuery } from '../lib/gmail';
 import EmailConfirmationCard from './EmailConfirmationCard';
+import TelegramConfirmCard from './TelegramConfirmCard';
+import { runAgentLoop } from '../lib/agentLoop';
 import useChatHistory from '../hooks/useChatHistory';
 import ChatHistoryPanel from './ChatHistoryPanel';
 import { speakText as ttsSpeak, stopSpeaking as ttsStop, isTTSEnabled, setTTSEnabled } from '../lib/ttsManager';
@@ -585,6 +587,20 @@ function isResearchRequest(text) {
   return RESEARCH_TRIGGERS.some((t) => lower.includes(t)) && text.length > 25;
 }
 
+// ── Agentic-route detection ───────────────────────────────────────────────────
+// Conservative: requires BOTH an explicit Telegram-delivery intent AND a
+// lookup/research intent. Anything ambiguous falls through to existing routes.
+
+function isAgenticRequest(text) {
+  const lower = text.toLowerCase();
+  const wantsTelegramDelivery =
+    /\btelegram\s+(me|it|that|them|the)\b/.test(lower) ||
+    /\b(send|forward|share|post|message|deliver)\b[^.]*\b(to|on|via)\s+telegram\b/.test(lower);
+  const wantsLookup =
+    /\b(find|search|look up|check|get|compare|list|research|what(?:'s| is| are)|price|rate|cost|available|availability|news|weather|hotel|flight|restaurant)\b/.test(lower);
+  return wantsTelegramDelivery && wantsLookup;
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 /**
@@ -632,6 +648,9 @@ export default function ChatBot({
   const [webSearchMode,       setWebSearchMode]       = useState(false);
   const [isSearching,         setIsSearching]         = useState(false);
   const [isResearching,       setIsResearching]       = useState(false);
+  const [agentStatus,         setAgentStatus]         = useState(null);  // { phase, round, max } while agent loop runs
+  const [telegramDrafts,      setTelegramDrafts]      = useState({});
+  const telegramResolversRef = useRef({});  // draftId → Promise resolver for the agent loop
 
   // ── Chat history ──────────────────────────────────────────────────────────
   const chatHistory    = useChatHistory();
@@ -1072,6 +1091,47 @@ export default function ChatBot({
     return draftId;
   }
 
+  // ── Telegram draft confirmation (agentic loop) ────────────────────────────
+  // The agent loop parks on this Promise; SEND / CANCEL in the card resolves it.
+
+  function requestTelegramSendConfirmation(draftText) {
+    return new Promise((resolve) => {
+      const draftId = Date.now().toString();
+      telegramResolversRef.current[draftId] = resolve;
+      setTelegramDrafts((prev) => ({ ...prev, [draftId]: { message: draftText } }));
+      setMessages((prev) => [
+        ...prev,
+        {
+          role:    'assistant',
+          content: '[Telegram draft — awaiting your confirmation]',
+          meta:    { type: 'telegram-confirm', draftId },
+        },
+      ].slice(-MAX_MESSAGES));
+    });
+  }
+
+  function handleTelegramDraftChange(draftId, value) {
+    setTelegramDrafts((prev) => ({ ...prev, [draftId]: { ...prev[draftId], message: value } }));
+  }
+
+  function handleTelegramDraftDecision(draftId, action) {
+    const resolver     = telegramResolversRef.current[draftId];
+    const finalMessage = telegramDrafts[draftId]?.message ?? '';
+    delete telegramResolversRef.current[draftId];
+
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.meta?.type === 'telegram-confirm' && m.meta.draftId === draftId
+          ? (action === 'send'
+              ? { role: 'assistant', content: '📤 TELEGRAM DRAFT APPROVED\nSending now...', meta: { type: 'telegram-approved' } }
+              : { role: 'assistant', content: 'Understood. The Telegram message was cancelled.', meta: {} })
+          : m
+      )
+    );
+    setTelegramDrafts((prev) => { const n = { ...prev }; delete n[draftId]; return n; });
+    resolver?.({ action, message: finalMessage });
+  }
+
   // ── Reconnect Google ──────────────────────────────────────────────────────
 
   async function handleReconnectGoogle() {
@@ -1471,6 +1531,31 @@ export default function ChatBot({
         setPendingEmailContext(null);
         // Fall through to normal intent detection
       }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // BRANCH 1.4 — Agentic tool loop (web search + Telegram delivery)
+    // Must run before deep research: these requests contain research-ish words
+    // but ask for Telegram delivery, which no other route can do.
+    // ════════════════════════════════════════════════════════════════════════
+    if (isAgenticRequest(text)) {
+      console.log('[TASKI] Route: AGENT LOOP');
+      setAgentStatus({ phase: 'working', round: 1, max: 8 });
+      try {
+        const result = await runAgentLoop(text, {
+          onStatus:                (s) => setAgentStatus(s),
+          requestSendConfirmation: requestTelegramSendConfirmation,
+        });
+        addMessage({ role: 'assistant', content: result.text, meta: { sources: result.sources } });
+        speakText(result.text); // final reply only — statuses and drafts are never spoken
+      } catch (err) {
+        console.error('[Agent] Loop error:', err);
+        addMessage({ role: 'assistant', content: `⚠ Agent stopped: ${err.message}` });
+      } finally {
+        setAgentStatus(null);
+        setLoading(false);
+      }
+      return;
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -2783,8 +2868,19 @@ export default function ChatBot({
                 />
               </div>
 
-            ) : msg.meta?.type === 'email-sent' ? (
-              /* ── Email sent confirmation ── */
+            ) : msg.meta?.type === 'telegram-confirm' && telegramDrafts[msg.meta.draftId] ? (
+              /* ── Telegram draft confirmation card (agentic loop) ── */
+              <div style={{ width: '100%' }}>
+                <TelegramConfirmCard
+                  draft={telegramDrafts[msg.meta.draftId]}
+                  onChange={(value) => handleTelegramDraftChange(msg.meta.draftId, value)}
+                  onSend={() => handleTelegramDraftDecision(msg.meta.draftId, 'send')}
+                  onCancel={() => handleTelegramDraftDecision(msg.meta.draftId, 'cancel')}
+                />
+              </div>
+
+            ) : msg.meta?.type === 'email-sent' || msg.meta?.type === 'telegram-approved' ? (
+              /* ── Email sent / Telegram approved confirmation ── */
               <div
                 style={{
                   maxWidth:      '90%',
@@ -2850,8 +2946,46 @@ export default function ChatBot({
           </div>
         ))}
 
+        {/* ── Agent status strip (agentic tool loop) ── */}
+        {agentStatus && (
+          <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+            <div
+              style={{
+                padding:      '7px 12px',
+                borderRadius: '4px',
+                background:   'rgba(0,212,255,0.05)',
+                border:       '1px solid rgba(0,212,255,0.3)',
+                boxShadow:    '0 0 12px rgba(0,212,255,0.12)',
+                display:      'flex',
+                alignItems:   'center',
+                gap:          '8px',
+              }}
+            >
+              <div style={{
+                width:        '6px',
+                height:       '6px',
+                borderRadius: '50%',
+                background:   '#00d4ff',
+                boxShadow:    '0 0 6px #00d4ff',
+                animation:    'statusPulse 1s ease-in-out infinite',
+              }} />
+              <span style={{
+                fontFamily:    "'Orbitron', sans-serif",
+                fontSize:      '9px',
+                fontWeight:    700,
+                letterSpacing: '0.15em',
+                color:         '#00d4ff',
+              }}>
+                {agentStatus.phase === 'confirming' ? 'AGENT · AWAITING YOUR CONFIRMATION'
+                  : agentStatus.phase === 'sending' ? 'AGENT · SENDING TO TELEGRAM…'
+                  : `AGENT · WORKING… ROUND ${agentStatus.round}/${agentStatus.max}`}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* ── Thinking indicator ── */}
-        {loading && (
+        {loading && !agentStatus && (
           <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
             <div
               style={{

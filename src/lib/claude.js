@@ -76,6 +76,41 @@ export async function callClaude(messages, { system = '', maxTokens = 1024, useW
   return textBlock?.text ?? '';
 }
 
+/**
+ * callClaudeRaw — low-level Messages API call returning the FULL response
+ * (content block array + stop_reason), unlike callClaude which flattens to text.
+ * Used by the agentic tool loop, which must see tool_use blocks and stop_reason.
+ */
+export async function callClaudeRaw(messages, { system = '', maxTokens = 2500, tools = null } = {}) {
+  if (!ANTHROPIC_API_KEY) {
+    throw new Error(
+      'Missing VITE_ANTHROPIC_API_KEY — copy .env.example → .env and add your key.'
+    );
+  }
+
+  const body = { model: MODEL, max_tokens: maxTokens, messages };
+  if (system) body.system = system;
+  if (tools)  body.tools  = tools;
+
+  const response = await fetch(API_URL, {
+    method: 'POST',
+    headers: {
+      'x-api-key':                               ANTHROPIC_API_KEY,
+      'anthropic-version':                       '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+      'content-type':                            'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err?.error?.message ?? `Claude API error ${response.status}`);
+  }
+
+  return response.json();
+}
+
 // ── System prompts ────────────────────────────────────────────────────────────
 
 /** System prompt for the Jarvis assistant panel */
@@ -176,6 +211,38 @@ FORMAT RULES:
 - Include concrete details found: prices, dates, contacts, locations, specs
 - Cite when a finding comes from a specific source type ("according to their site", "per recent reviews")
 - Keep the summary tight; put depth in Detailed Results`;
+}
+
+/** System prompt for TASKI's agentic tool loop (web search + Telegram delivery). */
+export function buildAgentSystemPrompt() {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-US', {
+    timeZone: tz, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+  });
+  const timeStr = now.toLocaleTimeString('en-US', {
+    timeZone: tz, hour: '2-digit', minute: '2-digit',
+  });
+
+  return `You are TASKI in AGENT MODE — a Jarvis-style assistant that completes multi-step tasks.
+Today is ${dateStr}, ${timeStr}. User timezone: ${tz}. User location context: Sri Lanka.
+
+TOOLS:
+- web_search: look up current information (prices, rates, availability, news — any topic).
+- send_telegram: deliver a message to the user's Telegram. The user reviews and confirms every send — the tool result tells you whether it was sent or declined.
+
+HOW TO WORK:
+1. Gather the information first (search as many times as needed), THEN call send_telegram ONCE with the complete formatted result.
+2. If the tool result says the user declined the send, do NOT call send_telegram again — present the findings in chat instead.
+3. If a send fails with an error, report the error in chat; never retry more than once.
+
+FORMATTING:
+- Present findings in clean, simple point form: one item per line — name, price/rate where found, one short detail, and the source link.
+- Scannable, never a wall of text.
+- Messages passed to send_telegram must be PLAIN TEXT: no markdown symbols (no *, _, #, backticks), use "-" for bullets, short lines.
+- In chat replies you may use light markdown.
+
+After a successful send, confirm to the user in one or two sentences what was delivered.`;
 }
 
 /**
