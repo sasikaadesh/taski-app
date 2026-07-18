@@ -1,6 +1,6 @@
 // telegramProcessor.js — Routes Telegram messages through the full Taski pipeline.
 
-import { sendMessage, sendTyping } from './telegramService';
+import { sendTelegramMessage, sendTyping } from './telegramService';
 import { transcribeAudio }         from './whisperService';
 import { callClaude }              from './claude';
 import { speakText }               from './ttsManager';
@@ -40,11 +40,11 @@ export async function processTelegramMessage(token, chatId, userText, username) 
         { system: systemPrompt, maxTokens: 1000 }
       );
       const text = typeof result === 'object' ? result.text : result;
-      await sendMessage(token, chatId, text);
+      await sendTelegramMessage(text, chatId);
       speakText(text); // ttsManager checks the mute flag itself
       return;
     } catch (e) {
-      await sendMessage(token, chatId, 'Could not get morning briefing: ' + e.message);
+      await sendTelegramMessage('Could not get morning briefing: ' + e.message, chatId);
       return;
     }
   }
@@ -138,9 +138,9 @@ export async function processTelegramMessage(token, chatId, userText, username) 
       { system: systemPrompt, maxTokens: 800, useWebSearch: false }
     );
     const text = typeof result === 'object' ? result.text : result;
-    await sendMessage(token, chatId, text || 'Sorry, I could not process that request.');
+    await sendTelegramMessage(text || 'Sorry, I could not process that request.', chatId);
     if (text) speakText(text); // ttsManager checks the mute flag itself
   } catch (e) {
-    await sendMessage(token, chatId, 'Error: ' + e.message);
+    await sendTelegramMessage('Error: ' + e.message, chatId);
   }
 }

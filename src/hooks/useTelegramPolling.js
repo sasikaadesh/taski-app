@@ -6,8 +6,9 @@ import {
   parseUpdate,
   getVoiceFileUrl,
   downloadVoiceFile,
-  sendMessage,
+  sendTelegramMessage,
   sendTyping,
+  rememberChatId,
 } from '../lib/telegramService';
 import { transcribeAudio }         from '../lib/whisperService';
 import { processTelegramMessage }  from '../lib/telegramProcessor';
@@ -25,6 +26,9 @@ export function useTelegramPolling() {
   async function handleUpdate(update) {
     const parsed = parseUpdate(update);
     if (!parsed) return;
+
+    // Persist chat_id so proactive sends work after a restart
+    rememberChatId(parsed.chatId);
 
     const key = parsed.updateId.toString();
     if (processingRef.current.has(key)) return;
@@ -50,13 +54,13 @@ export function useTelegramPolling() {
         const fileUrl = await getVoiceFileUrl(token, fileId);
 
         if (!fileUrl) {
-          await sendMessage(token, parsed.chatId, 'Could not download voice message.');
+          await sendTelegramMessage('Could not download voice message.', parsed.chatId);
           return;
         }
 
         const audioFile = await downloadVoiceFile(fileUrl);
         if (!audioFile) {
-          await sendMessage(token, parsed.chatId, 'Could not process audio.');
+          await sendTelegramMessage('Could not process audio.', parsed.chatId);
           return;
         }
 
@@ -64,11 +68,11 @@ export function useTelegramPolling() {
         console.log('[Telegram] Transcribed:', userText);
 
         if (!userText?.trim()) {
-          await sendMessage(token, parsed.chatId, 'Could not understand audio. Please try again.');
+          await sendTelegramMessage('Could not understand audio. Please try again.', parsed.chatId);
           return;
         }
 
-        await sendMessage(token, parsed.chatId, `🎤 _"${userText}"_\n\nProcessing...`);
+        await sendTelegramMessage(`🎤 "${userText}"\n\nProcessing...`, parsed.chatId);
       }
 
       if (!userText?.trim()) return;
@@ -80,7 +84,7 @@ export function useTelegramPolling() {
       console.error('[Telegram] Error:', e);
       setStatus('active');
       try {
-        await sendMessage(token, parsed.chatId, 'Sorry, something went wrong: ' + e.message);
+        await sendTelegramMessage('Sorry, something went wrong: ' + e.message, parsed.chatId);
       } catch { /* ignore send error */ }
     } finally {
       setTimeout(() => processingRef.current.delete(key), 5000);

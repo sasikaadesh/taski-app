@@ -22,20 +22,63 @@ export async function getUpdates(token) {
   }
 }
 
-export async function sendMessage(token, chatId, text) {
-  const limit = 4000;
-  const chunks = [];
-  for (let i = 0; i < text.length; i += limit) {
-    chunks.push(text.slice(i, i + limit));
-  }
+const CHAT_ID_KEY = 'taski_telegram_chat_id';
 
-  for (const chunk of chunks) {
-    await fetch(`${BASE_URL(token)}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: chunk, parse_mode: 'Markdown' }),
-    });
+export function rememberChatId(chatId) {
+  if (chatId) localStorage.setItem(CHAT_ID_KEY, String(chatId));
+}
+
+export function getSavedChatId() {
+  return localStorage.getItem(CHAT_ID_KEY);
+}
+
+// The ONE send path — used for replies and proactive sends alike.
+// Plain text on purpose: parse_mode Markdown makes Telegram 400 on any
+// unbalanced * _ [ in generated content, and the message silently dies.
+export async function sendTelegramMessage(text, chatId = null) {
+  const token  = import.meta.env.VITE_TELEGRAM_BOT_TOKEN;
+  const target = chatId ?? getSavedChatId();
+
+  if (!token)  return reportSendError('VITE_TELEGRAM_BOT_TOKEN is not set in .env');
+  if (!target) return reportSendError('No chat_id known — send the bot any message from Telegram once so Taski can learn it');
+  if (!text)   return { ok: true };
+
+  for (const chunk of splitChunks(String(text), 4096)) {
+    try {
+      const res  = await fetch(`${BASE_URL(token)}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: target, text: chunk }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        return reportSendError(data.description || `HTTP ${res.status}`);
+      }
+    } catch (e) {
+      return reportSendError(e.message);
+    }
   }
+  return { ok: true };
+}
+
+function splitChunks(text, limit) {
+  const chunks = [];
+  let rest = text;
+  while (rest.length > limit) {
+    // Prefer breaking at a newline in the back half of the window
+    let cut = rest.lastIndexOf('\n', limit);
+    if (cut < limit / 2) cut = limit;
+    chunks.push(rest.slice(0, cut));
+    rest = rest.slice(cut).replace(/^\n/, '');
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
+}
+
+function reportSendError(reason) {
+  console.error('[Telegram] Send failed:', reason);
+  window.dispatchEvent(new CustomEvent('taski-telegram-send-error', { detail: { reason } }));
+  return { ok: false, error: reason };
 }
 
 export async function sendTyping(token, chatId) {

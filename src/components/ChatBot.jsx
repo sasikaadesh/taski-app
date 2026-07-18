@@ -802,6 +802,18 @@ export default function ChatBot({
     return () => window.removeEventListener('taski-telegram-message', handleTelegramMessage);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Surface Telegram send failures with the real Telegram error text
+  useEffect(() => {
+    function handleTelegramSendError(e) {
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: `⚠️ Telegram send failed: ${e.detail.reason}` },
+      ].slice(-50));
+    }
+    window.addEventListener('taski-telegram-send-error', handleTelegramSendError);
+    return () => window.removeEventListener('taski-telegram-send-error', handleTelegramSendError);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Auto-save after each assistant response (when loading transitions true→false)
   useEffect(() => {
     if (prevLoadingRef.current && !loading && messages.length > 0) {

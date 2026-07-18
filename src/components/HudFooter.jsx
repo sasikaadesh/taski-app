@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { isAuthenticated, signIn } from '../lib/googleAuth';
+import { sendTelegramMessage, getSavedChatId } from '../lib/telegramService';
 
 // ── Status dot ────────────────────────────────────────────────────────────────
 
@@ -164,6 +165,15 @@ export default function HudFooter({
   const [googleStatus,         setGoogleStatus]         = useState('checking');
   const [connecting,           setConnecting]           = useState(false);
   const [showTelegramSettings, setShowTelegramSettings] = useState(false);
+  const [tgTestResult,         setTgTestResult]         = useState(null);
+
+  async function handleTelegramTest() {
+    setTgTestResult('⟳ Sending…');
+    const result = await sendTelegramMessage(
+      `✅ Taski test message — ${new Date().toLocaleTimeString()}\n\nIf you can read this, the Taski → Telegram send path works.`
+    );
+    setTgTestResult(result.ok ? '✓ Sent — check Telegram' : `✗ ${result.error}`);
+  }
 
   useEffect(() => {
     const checkAuth = () => {
@@ -320,6 +330,37 @@ export default function HudFooter({
             >
               {tgActive ? '⏹ STOP BOT' : '▶ START BOT'}
             </button>
+            <button
+              onClick={handleTelegramTest}
+              title={getSavedChatId() ? 'Send a test message to your Telegram chat' : 'Message the bot from Telegram once first, so Taski learns your chat_id'}
+              style={{
+                marginTop:     '6px',
+                width:         '100%',
+                padding:       '5px',
+                borderRadius:  '4px',
+                border:        '1px solid rgba(0,212,255,0.3)',
+                background:    'transparent',
+                color:         '#00d4ff',
+                fontFamily:    "'Rajdhani', sans-serif",
+                fontSize:      '10px',
+                letterSpacing: '0.1em',
+                cursor:        'pointer',
+              }}
+            >
+              📤 SEND TEST MESSAGE
+            </button>
+            {tgTestResult && (
+              <div style={{
+                marginTop:  '5px',
+                fontSize:   '10px',
+                fontFamily: "'Rajdhani', sans-serif",
+                color:      tgTestResult.startsWith('✓') ? '#00ff88'
+                          : tgTestResult.startsWith('✗') ? '#ff2d55'
+                          : '#ffaa00',
+              }}>
+                {tgTestResult}
+              </div>
+            )}
           </div>
         )}
       </div>
